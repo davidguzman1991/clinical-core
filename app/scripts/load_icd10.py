@@ -44,7 +44,7 @@ def load_icd10(csv_path: str | None = None, batch_size: int = 5000) -> None:
         logger.info("Starting ICD10 load from %s", path.as_posix())
 
         inserted_total = 0
-        batch: list[dict[str, str]] = []
+        batch: list[ICD10] = []
 
         with open(path, encoding="utf-8", newline="") as f:
             reader = csv.DictReader(f)
@@ -54,29 +54,36 @@ def load_icd10(csv_path: str | None = None, batch_size: int = 5000) -> None:
                 if not code or not description:
                     continue
 
-                batch.append({"code": code, "description": description})
+                batch.append(ICD10(code=code, description=description))
 
                 if len(batch) >= batch_size:
                     try:
-                        with db.begin():
-                            db.bulk_insert_mappings(ICD10, batch)
+                        db.add_all(batch)
+                        db.commit()
                         inserted_total += len(batch)
                         logger.info("Inserted %s ICD10 rows", inserted_total)
                         batch.clear()
                     except SQLAlchemyError:
+                        db.rollback()
                         logger.exception("Failed inserting ICD10 batch")
-                        raise
+                        return
 
         if batch:
-            with db.begin():
-                db.bulk_insert_mappings(ICD10, batch)
-            inserted_total += len(batch)
+            try:
+                db.add_all(batch)
+                db.commit()
+                inserted_total += len(batch)
+            except SQLAlchemyError:
+                db.rollback()
+                logger.exception("Failed inserting final ICD10 batch")
+                return
 
         logger.info("ICD10 loaded successfully. Inserted rows=%s", inserted_total)
 
     except Exception:
+        db.rollback()
         logger.exception("ICD10 load failed")
-        raise
+        return
     finally:
         db.close()
 
