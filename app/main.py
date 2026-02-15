@@ -11,7 +11,7 @@ authentication, prescriptions, and frontend logic must not be added to this repo
 from fastapi import FastAPI
 
 from app.clinical.icd10.router import router as icd10_router
-from app.routers import intelligent_search, search_learning, search_suggestions
+from app.routers import clinical_search, intelligent_search, search_learning, search_suggestions
 
 
 def create_app() -> FastAPI:
@@ -25,6 +25,7 @@ def create_app() -> FastAPI:
     app.include_router(search_learning.router)
     app.include_router(search_suggestions.router)
     app.include_router(intelligent_search.router)
+    app.include_router(clinical_search.router)
 
     return app
 

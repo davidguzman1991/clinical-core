@@ -1,0 +1,304 @@
+term,specialty,suggested_icd
+hiperglucemia,endocrino,E11
+hipoglucemia,endocrino,E16
+descompensacion diabetica,endocrino,E11
+cetoacidosis,endocrino,E10
+estado hiperosmolar,endocrino,E11
+resistencia a la insulina,endocrino,E88
+neuropatia diabetica,endocrino,E114
+nefropatia diabetica,endocrino,E112
+retinopatia diabetica,endocrino,E113
+pie diabetico,endocrino,E115
+ulcera diabetica,endocrino,L97
+osteomielitis diabetica,endocrino,M86
+obesidad,endocrino,E66
+sobrepeso,endocrino,E66
+sindrome metabolico,endocrino,E88
+dislipidemia,endocrino,E78
+hipertrigliceridemia,endocrino,E78
+higado graso,endocrino,K76
+diabetes tipo 2,endocrino,E11
+dm2,endocrino,E11
+diabetes,endocrino,E11
+glucosa alta,endocrino,E11
+azucar alta,endocrino,E11
+prediabetes,endocrino,R73
+hipercolesterolemia,endocrino,E78
+erc diabetica,endocrino,N18
+hipotiroidismo,endocrino,E03
+hipertiroidismo,endocrino,E05
+hipertension,cardio,I10
+hta,cardio,I10
+presion alta,cardio,I10
+cardiopatia isquemica,cardio,I25
+angina,cardio,I20
+infarto,cardio,I21
+iam,cardio,I21
+insuficiencia cardiaca,cardio,I50
+fibrilacion auricular,cardio,I48
+arritmia,cardio,I49
+riesgo cardiovascular,cardio,Z13
+nodulo tiroideo,endocrino,E04
+sindrome coronario agudo,cardio,I24
+dolor toracico,cardio,R07
+dolor precordial,cardio,R07
+palpitaciones,cardio,R00
+sincope,cardio,R55
+disnea,cardio,R06
+edema,cardio,R60
+fiebre,general,R50
+fatiga,general,R53
+debilidad,general,R53
+perdida de peso,general,R63
+mareo,general,R42
+cefalea,general,R51
+nauseas,general,R11
+vomitos,general,R11
+insomnio,general,G47
+ansiedad,general,F41
+depresion,general,F32
+dolor cronico,general,R52
+neumonia,infeccioso,J18
+bronquitis,infeccioso,J20
+faringitis,infeccioso,J02
+infeccion respiratoria,infeccioso,J06
+infeccion urinaria,infeccioso,N39
+cistitis,infeccioso,N30
+pielonefritis,infeccioso,N10
+celulitis,infeccioso,L03
+absceso,infeccioso,L02
+herida infectada,infeccioso,T14
+sepsis,infeccioso,A41
+choque septico,infeccioso,R65
+dolor agudo,dolor,R52
+dolor severo,dolor,R52
+dolor moderado,dolor,R52
+dolor leve,dolor,R52
+dolor generalizado,dolor,R52
+dolor persistente,dolor,R52
+dolor recurrente,dolor,R52
+dolor neuropatico,dolor,G62
+dolor somatico,dolor,R52
+dolor visceral,dolor,R52
+dolor central,dolor,G89
+dolor refractario,dolor,G89
+dolor intratable,dolor,G89
+dolor maligno,dolor,G89
+dolor oncologico,dolor,G89
+dolor postoperatorio,dolor,G89
+dolor postquirurgico,dolor,G89
+dolor postraumatico,dolor,G89
+dolor inflamatorio,dolor,R52
+dolor mixto,dolor,G89
+dolor idiopatico,dolor,R52
+dolor funcional,dolor,R52
+dolor psicogeno,dolor,F45
+dolor nociceptivo,dolor,R52
+neuralgia,dolor,G58
+neuralgia postherpetica,dolor,B02
+alodinia,dolor,G62
+hiperalgesia,dolor,G62
+disestesia,dolor,G62
+parestesias dolorosas,dolor,G62
+neuropatia dolorosa,dolor,G62
+neuropatia periferica,dolor,G62
+radiculopatia dolorosa,dolor,M54
+mialgia,dolor,M79
+fibromialgia,dolor,M79
+espasmo muscular,dolor,M62
+contractura muscular,dolor,M62
+dolor miofascial,dolor,M79
+sindrome dolor miofascial,dolor,M79
+dolor lumbar,dolor,M54
+lumbalgia,dolor,M54
+lumbociatalgia,dolor,M54
+cervicalgia,dolor,M54
+dorsalgia,dolor,M54
+dolor sacro,dolor,M54
+dolor gluteo,dolor,M79
+dolor de hombro,dolor,M25
+dolor de rodilla,dolor,M25
+dolor de cadera,dolor,M25
+dolor articular,dolor,M25
+artralgia,dolor,M25
+dolor musculoesqueletico,dolor,M79
+dolor cronico lumbar,dolor,M54
+dolor por cancer,dolor,G89
+dolor terminal,dolor,G89
+dolor irruptivo,dolor,G89
+dolor incidental,dolor,G89
+dolor basal,dolor,G89
+dolor refractario cancer,dolor,G89
+dolor metastasico,dolor,C79
+dolor oseo metastasico,dolor,C79
+cefalea cronica,dolor,R51
+cefalea tensional,dolor,G44
+migrana,dolor,G43
+migrana cronica,dolor,G43
+migrana con aura,dolor,G43
+migrana sin aura,dolor,G43
+cefalea en racimos,dolor,G44
+dolor abdominal,dolor,R10
+dolor pleuritico,dolor,R07
+dolor cardiaco,dolor,I20
+dolor renal,dolor,N23
+dolor ureteral,dolor,N23
+dolor pelvico,dolor,R10
+dolor ginecologico,dolor,R10
+dolor neuropatico diabetico,dolor,E11
+dolor en pie diabetico,dolor,E11
+fractura,dolor,S52
+fractura abierta,trauma,S52
+fractura cerrada,trauma,S52
+fractura desplazada,trauma,S52
+fractura no desplazada,trauma,S52
+fractura conminuta,trauma,S52
+fractura patologica,trauma,M84
+fractura de humero,trauma,S42
+fractura de radio,trauma,S52
+fractura de cubito,trauma,S52
+fractura de clavicula,trauma,S42
+fractura de femur,trauma,S72
+fractura de tibia,trauma,S82
+fractura de perone,trauma,S82
+fractura de cadera,trauma,S72
+fractura vertebral,trauma,S22
+fractura costal,trauma,S22
+fractura metatarsiano,trauma,S92
+fractura falange,trauma,S92
+fractura de muneca,trauma,S62
+traumatismo,trauma,T14
+politraumatismo,trauma,T07
+traumatismo craneal,trauma,S06
+traumatismo leve,trauma,S06
+traumatismo severo,trauma,S06
+herida,trauma,S01
+herida abierta,trauma,S01
+herida penetrante,trauma,S01
+laceracion,trauma,S01
+contusion,trauma,S00
+hematoma,trauma,S00
+equimosis,trauma,S00
+esguince,trauma,S93
+esguince de tobillo,trauma,S93
+esguince de rodilla,trauma,S83
+lesion ligamentaria,trauma,S83
+rotura ligamentaria,trauma,S83
+rotura lca,trauma,S83
+rotura lcp,trauma,S83
+lesion meniscal,trauma,S83
+rotura menisco,trauma,S83
+tendinitis,trauma,M65
+tendinopatia,trauma,M65
+luxacion,trauma,S53
+subluxacion,trauma,S53
+luxacion de hombro,trauma,S43
+luxacion de codo,trauma,S53
+luxacion de rodilla,trauma,S83
+amputacion traumatica,trauma,S68
+lesion nerviosa,trauma,S04
+insuficiencia renal,nefro,N19
+insuficiencia renal cronica,nefro,N18
+insuficiencia renal aguda,nefro,N17
+enfermedad renal cronica,nefro,N18
+erc estadio 1,nefro,N18
+erc estadio 2,nefro,N18
+erc estadio 3,nefro,N18
+erc estadio 4,nefro,N18
+erc estadio 5,nefro,N18
+sindrome nefrotico,nefro,N04
+sindrome nefritico,nefro,N00
+glomerulonefritis,nefro,N00
+glomerulopatia,nefro,N05
+nefritis,nefro,N05
+albuminuria,nefro,R80
+microalbuminuria,nefro,R80
+proteinuria,nefro,R80
+litiasis renal,nefro,N20
+calculo renal,nefro,N20
+nefrolitiasis,nefro,N20
+colico renal,nefro,N23
+hematuria,nefro,R31
+anuria,nefro,R34
+oliguria,nefro,R34
+retencion nitrogenada,nefro,N19
+azotemia,nefro,N19
+hiperkalemia,nefro,E87
+hipokalemia,nefro,E87
+acidosis metabolica,nefro,E87
+cefalea aguda,neurologia,R51
+vertigo,neurologia,R42
+inestabilidad,neurologia,R26
+trastorno del equilibrio,neurologia,R26
+debilidad generalizada,neurologia,R53
+astenia,neurologia,R53
+somnolencia,neurologia,R40
+confusion,neurologia,R41
+desorientacion,neurologia,R41
+perdida de conciencia,neurologia,R55
+trastorno de la memoria,neurologia,R41
+amnesia,neurologia,R41
+temblor,neurologia,R25
+temblor esencial,neurologia,G25
+temblor postural,neurologia,G25
+temblor de reposo,neurologia,G25
+movimientos involuntarios,neurologia,R25
+corea,neurologia,G25
+atetosis,neurologia,G25
+distonia,neurologia,G24
+tics,neurologia,F95
+discinesia,neurologia,G24
+bradicinesia,neurologia,G20
+rigidez,neurologia,G20
+acinesia,neurologia,G20
+enfermedad de parkinson,neurologia,G20
+parkinsonismo,neurologia,G21
+parkinson secundario,neurologia,G21
+parkinson atipico,neurologia,G23
+trastorno motor parkinsoniano,neurologia,G20
+ictus,neurologia,I64
+accidente cerebrovascular,neurologia,I64
+acv isquemico,neurologia,I63
+acv hemorragico,neurologia,I61
+ataque isquemico transitorio,neurologia,G45
+tromboembolismo cerebral,neurologia,I63
+infarto cerebral,neurologia,I63
+hemorragia intracerebral,neurologia,I61
+hemorragia subaracnoidea,neurologia,I60
+neuropatia,neurologia,G62
+neuropatia sensitiva,neurologia,G62
+neuropatia motora,neurologia,G62
+polineuropatia,neurologia,G62
+mononeuropatia,neurologia,G56
+radiculopatia,neurologia,M54
+neuralgia del trigemino,neurologia,G50
+parestesias,neurologia,R20
+demencia,neurologia,F03
+demencia alzheimer,neurologia,G30
+deterioro cognitivo,neurologia,R41
+deterioro cognitivo leve,neurologia,G31
+perdida de memoria,neurologia,R41
+trastorno neurocognitivo,neurologia,F03
+esclerosis multiple,neurologia,G35
+enfermedad desmielinizante,neurologia,G37
+neuromielitis optica,neurologia,G36
+miastenia gravis,neurologia,G70
+debilidad muscular,neurologia,M62
+atrofia muscular,neurologia,M62
+miopatia,neurologia,G72
+distrofia muscular,neurologia,G71
+meningitis,neurologia,G00
+meningitis bacteriana,neurologia,G00
+meningitis viral,neurologia,G03
+encefalitis,neurologia,G04
+absceso cerebral,neurologia,G06
+neuroinfeccion,neurologia,G04
+hipersomnia,neurologia,G47
+narcolepsia,neurologia,G47
+apnea del sueno,neurologia,G47
+trastorno del sueno,neurologia,G47
+hidrocefalia,neurologia,G91
+aumento de presion intracraneal,neurologia,G93
+tumor cerebral,neurologia,C71
+metastasis cerebral,neurologia,C79
+herniacion cerebral,neurologia,G93
