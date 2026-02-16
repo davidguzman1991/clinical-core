@@ -80,7 +80,7 @@ class ClinicalSearchService:
             user_id=user_id,
         )
 
-        ranked = self._rank_candidates(merged_candidates, usage)
+        ranked = self._rank_candidates(normalized_query, merged_candidates, usage)
         top_ranked = ranked[:limit]
 
         # Search events should not claim a clinician-selected ICD code.
@@ -112,6 +112,8 @@ class ClinicalSearchService:
                 continue
 
             existing.exact_match = existing.exact_match or candidate.exact_match
+            existing.prefix_match = existing.prefix_match or candidate.prefix_match
+            existing.description_match = existing.description_match or candidate.description_match
             existing.synonym_match = existing.synonym_match or candidate.synonym_match
             existing.fuzzy_similarity = max(existing.fuzzy_similarity, candidate.fuzzy_similarity)
 
@@ -119,6 +121,7 @@ class ClinicalSearchService:
 
     def _rank_candidates(
         self,
+        query: str,
         candidates: list[ICD10Candidate],
         usage: dict[str, UsageStats],
     ) -> list[RankedICD10Result]:
@@ -129,12 +132,17 @@ class ClinicalSearchService:
             user_frequency = int(getattr(stats, "user_frequency", 0))
             score = self.scoring_engine.score(
                 CandidateSignals(
+                    code=candidate.code,
+                    description=candidate.description,
                     exact_match=candidate.exact_match,
-                    synonym_match=candidate.synonym_match,
+                    prefix_match=candidate.prefix_match,
+                    dictionary_mapped=candidate.synonym_match,
+                    description_match=candidate.description_match,
                     fuzzy_similarity=candidate.fuzzy_similarity,
                     global_frequency=global_frequency,
                     user_frequency=user_frequency,
-                )
+                ),
+                query=query,
             )
             match_type = self._match_type(candidate)
             ranked.append(

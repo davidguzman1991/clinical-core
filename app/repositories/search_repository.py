@@ -23,6 +23,8 @@ class ICD10Candidate:
     code: str
     description: str
     exact_match: bool
+    prefix_match: bool
+    description_match: bool
     fuzzy_similarity: float
     synonym_match: bool = False
 
@@ -152,12 +154,19 @@ class ClinicalSearchRepository:
         desc_l = func.lower(ICD10.description)
         search_l = func.lower(func.coalesce(ICD10.search_terms, ""))
 
-        exact_match = or_(code_l == normalized_query, desc_l == normalized_query, search_l == normalized_query)
+        code_exact_match = code_l == normalized_query
+        exact_match = or_(code_exact_match, desc_l == normalized_query, search_l == normalized_query)
 
+        code_prefix_match = code_l.ilike(f"{normalized_query}%")
         prefix_match = or_(
             code_l.ilike(f"{normalized_query}%"),
             desc_l.ilike(f"{normalized_query}%"),
             search_l.ilike(f"{normalized_query}%"),
+        )
+
+        description_match = or_(
+            desc_l.ilike(f"%{normalized_query}%"),
+            search_l.ilike(f"%{normalized_query}%"),
         )
 
         substring_match = or_(
@@ -192,7 +201,9 @@ class ClinicalSearchRepository:
             select(
                 ICD10.code,
                 ICD10.description,
-                exact_match.label("exact_match"),
+                code_exact_match.label("exact_match"),
+                code_prefix_match.label("prefix_match"),
+                description_match.label("description_match"),
                 fuzzy_similarity.label("fuzzy_similarity"),
             )
             .where(or_(exact_match, prefix_match, substring_match, fuzzy_filter))
@@ -212,6 +223,8 @@ class ClinicalSearchRepository:
                 code=r.code,
                 description=r.description,
                 exact_match=bool(r.exact_match),
+                prefix_match=bool(r.prefix_match),
+                description_match=bool(r.description_match),
                 fuzzy_similarity=float(r.fuzzy_similarity or 0.0),
                 synonym_match=False,
             )
@@ -229,6 +242,8 @@ class ClinicalSearchRepository:
                 code=r.code,
                 description=r.description,
                 exact_match=False,
+                prefix_match=False,
+                description_match=False,
                 fuzzy_similarity=0.0,
                 synonym_match=True,
             )
