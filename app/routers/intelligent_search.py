@@ -29,7 +29,7 @@ router = APIRouter(prefix="/search", tags=["intelligent-search"])
 @router.get("/intelligent")
 def intelligent_search(
     q: str = Query(..., min_length=1, description="Search query"),
-    user_id: Optional[int] = Query(default=None, description="Optional user identifier for personalization"),
+    user_id: Optional[str] = Query(default=None, description="Optional user identifier for personalization"),
     specialty: Optional[str] = Query(default=None, description="Optional specialty for contextual ranking"),
     db: Session = Depends(get_db),
 ) -> list[dict[str, Any]]:

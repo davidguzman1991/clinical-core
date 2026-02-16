@@ -37,7 +37,7 @@ def clinical_search(
     limit: int = Query(20, ge=1, le=100, description="Max results (<= 100)"),
     offset: int = Query(0, ge=0, description="Pagination offset"),
     specialty: Optional[str] = Query(default=None, description="Optional specialty to boost relevance"),
-    user_id: Optional[int] = Query(default=None, description="Optional user id for future personalization"),
+    user_id: Optional[str] = Query(default=None, description="Optional user id for future personalization"),
     db: Session = Depends(get_db),
 ) -> list[dict]:
     query = normalize_query(q)
