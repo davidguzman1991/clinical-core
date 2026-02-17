@@ -6,6 +6,7 @@ Endpoint:
 
 from __future__ import annotations
 
+import re
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -33,11 +34,23 @@ def _normalize_query(value: str) -> str:
     return " ".join(value.strip().split())
 
 
-@router.get("/search", response_model=List[ICD10SearchResult])
-async def search_icd10(
-    q: str = Query(..., min_length=1, description="Clinical query (code or terms)"),
-    limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
-    db: AsyncSession = Depends(get_async_db),
+def normalize_icd_input(q: str) -> str:
+    if not q:
+        return q
+
+    q = q.strip().upper()
+
+    # Insertar punto automático ICD10
+    if re.match(r"^[A-Z][0-9]{3}$", q):
+        return q[:3] + "." + q[3:]
+
+    return q
+
+
+async def _run_icd10_search(
+    q: str,
+    limit: int,
+    db: AsyncSession,
 ) -> List[ICD10SearchResult]:
     query = _normalize_query(q)
     if not query:
@@ -102,3 +115,25 @@ async def search_icd10(
         )
         for row in rows
     ]
+
+
+@router.get("/search", response_model=List[ICD10SearchResult])
+async def search_icd10(
+    q: str = Query(..., min_length=1, description="Clinical query (code or terms)"),
+    limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
+    db: AsyncSession = Depends(get_async_db),
+) -> List[ICD10SearchResult]:
+    # Normalizacion previa compatible con texto y codigo ICD-10.
+    q = normalize_icd_input(q)
+    return await _run_icd10_search(q=q, limit=limit, db=db)
+
+
+@router.get("/search-advanced", response_model=List[ICD10SearchResult])
+async def search_icd10_advanced(
+    q: str = Query(..., min_length=1, description="Clinical query (code or terms)"),
+    limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
+    db: AsyncSession = Depends(get_async_db),
+) -> List[ICD10SearchResult]:
+    # Punto unico para futuras mejoras de normalizacion clinica avanzada.
+    q = normalize_icd_input(q)
+    return await _run_icd10_search(q=q, limit=limit, db=db)
