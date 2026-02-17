@@ -25,6 +25,13 @@ def _configure_logging() -> None:
     )
 
 
+def normalize_icd10_official(code: str) -> str:
+    compact = _ICD_CODE_RE.sub("", (code or "").strip().upper())
+    if len(compact) > 3 and compact[0].isalpha() and compact[1:3].isdigit():
+        return f"{compact[:3]}.{compact[3:]}"
+    return compact
+
+
 def _seed_terms() -> list[dict[str, object]]:
     # Basic high-impact terms for ICD-10 autocomplete.
     terms: list[dict[str, object]] = [
@@ -32,7 +39,7 @@ def _seed_terms() -> list[dict[str, object]]:
         {"term": "dm2", "icd10_code": "E11", "priority": 9},
         {"term": "diabetes tipo 2", "icd10_code": "E11", "priority": 10},
         {"term": "diabetes mellitus tipo 2", "icd10_code": "E11", "priority": 10},
-        {"term": "diabetes gestacional", "icd10_code": "O24", "priority": 9},
+        {"term": "diabetes gestacional", "icd10_code": "O24.4", "priority": 9},
         {"term": "neuropatia diabetica", "icd10_code": "E11.4", "priority": 8},
         {"term": "pie diabetico", "icd10_code": "E11.5", "priority": 8},
         {"term": "retinopatia diabetica", "icd10_code": "E11.3", "priority": 8},
@@ -43,13 +50,10 @@ def _seed_terms() -> list[dict[str, object]]:
         {"term": "insuficiencia cardiaca", "icd10_code": "I50", "priority": 9},
     ]
 
-    def _normalize_icd_code(value: str) -> str:
-        return _ICD_CODE_RE.sub("", str(value or "").strip().upper())
-
     out: list[dict[str, object]] = []
     for t in terms:
         term = str(t["term"]).strip()
-        icd10_code = _normalize_icd_code(str(t["icd10_code"]))
+        icd10_code = normalize_icd10_official(str(t["icd10_code"]))
         if not term:
             continue
         if not icd10_code:
@@ -85,7 +89,7 @@ def seed_clinical_dictionary(batch_size: int = 200) -> None:
             return
 
         existing_icd10_codes = {
-            _ICD_CODE_RE.sub("", str(code).strip().upper())
+            normalize_icd10_official(str(code))
             for code in db.execute(select(ICD10.code)).scalars().all()
             if code
         }

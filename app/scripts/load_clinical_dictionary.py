@@ -49,10 +49,12 @@ def _pick_column(df: pd.DataFrame, candidates: tuple[str, ...]) -> str | None:
     return None
 
 
-def _normalize_icd_code(value: object) -> str:
+def normalize_icd10_official(value: object) -> str:
     text = str(value) if value is not None else ""
-    text = text.strip().upper()
-    return _ICD_CODE_RE.sub("", text)
+    compact = _ICD_CODE_RE.sub("", text.strip().upper())
+    if len(compact) > 3 and compact[0].isalpha() and compact[1:3].isdigit():
+        return f"{compact[:3]}.{compact[3:]}"
+    return compact
 
 
 def load_dictionary(
@@ -86,7 +88,7 @@ def load_dictionary(
         raise ValueError("CSV must include one of: icd10_code, suggested_icd")
 
     term_series = df[col_term].fillna("").map(_normalize_text)
-    icd10_series = df[col_icd10].fillna("").map(_normalize_icd_code)
+    icd10_series = df[col_icd10].fillna("").map(normalize_icd10_official)
     priority_series = (
         pd.to_numeric(df[col_priority], errors="coerce").fillna(1).astype(int)
         if col_priority

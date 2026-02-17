@@ -29,8 +29,12 @@ _ICD_CODE_RE = re.compile(r"[^A-Z0-9]")
 logger = logging.getLogger(__name__)
 
 
-def _normalize_icd_code(value: str) -> str:
-    return _ICD_CODE_RE.sub("", (value or "").strip().upper())
+def normalize_icd10_official(code: str) -> str:
+    """Normalize ICD-10 code to official dotted format when possible."""
+    compact = _ICD_CODE_RE.sub("", (code or "").strip().upper())
+    if len(compact) > 3 and compact[0].isalpha() and compact[1:3].isdigit():
+        return f"{compact[:3]}.{compact[3:]}"
+    return compact
 
 
 def upgrade() -> None:
@@ -47,7 +51,7 @@ def upgrade() -> None:
             return
 
         existing_codes = {
-            _normalize_icd_code(str(code))
+            normalize_icd10_official(str(code))
             for code in session.execute(sa.text("SELECT code FROM icd10")).scalars().all()
             if code
         }
@@ -85,7 +89,7 @@ def upgrade() -> None:
             ("dm2", "E11", 9),
             ("diabetes tipo 2", "E11", 10),
             ("diabetes mellitus tipo 2", "E11", 10),
-            ("diabetes gestacional", "O24", 9),
+            ("diabetes gestacional", "O24.4", 9),
             ("neuropatia diabetica", "E11.4", 8),
             ("pie diabetico", "E11.5", 8),
             ("retinopatia diabetica", "E11.3", 8),
@@ -98,15 +102,15 @@ def upgrade() -> None:
 
         valid_rows = []
         for term, code, priority in seed_terms:
-            normalized_code = _normalize_icd_code(code)
-            if normalized_code not in existing_codes:
-                logger.warning("Skipping clinical_dictionary term '%s': ICD10 code '%s' not found", term, normalized_code)
+            official_code = normalize_icd10_official(code)
+            if official_code not in existing_codes:
+                logger.warning("Skipping clinical_dictionary term '%s': ICD10 code '%s' not found", term, official_code)
                 continue
             valid_rows.append(
                 {
                     "id": uuid4(),
                     "term": term.strip().lower(),
-                    "icd10_code": normalized_code,
+                    "icd10_code": official_code,
                     "priority": int(priority),
                     "created_at": datetime.now(timezone.utc),
                 }
