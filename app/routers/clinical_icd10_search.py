@@ -11,7 +11,7 @@ from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
-from sqlalchemy import case, func, literal, or_, select
+from sqlalchemy import case, func, literal, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.clinical.icd10.models import ICD10
@@ -128,12 +128,52 @@ async def search_icd10(
     return await _run_icd10_search(q=q, limit=limit, db=db)
 
 
-@router.get("/search-advanced", response_model=List[ICD10SearchResult])
+@router.get("/search-advanced")
 async def search_icd10_advanced(
     q: str = Query(..., min_length=1, description="Clinical query (code or terms)"),
     limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
     db: AsyncSession = Depends(get_async_db),
-) -> List[ICD10SearchResult]:
-    # Punto unico para futuras mejoras de normalizacion clinica avanzada.
+) -> list:
+    # Normalizacion comun para compatibilidad de codigo ICD y terminos clinicos.
     q = normalize_icd_input(q)
-    return await _run_icd10_search(q=q, limit=limit, db=db)
+    q = _normalize_query(q)
+    if not q:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="q must not be empty",
+        )
+
+    # SQL avanzada con prioridad al diccionario clinical_terms.
+    # Nota: se mantiene LIMIT 20 para estabilidad del ranking y latencia.
+    sql = """
+SELECT
+    i.code,
+    i.description,
+    (
+        ts_rank(i.search_vector, query) * 3 +
+        similarity(i.description, :q) * 2 +
+        similarity(coalesce(ct.term, ''), :q) * 4 +
+        CASE
+            WHEN unaccent(i.description) ILIKE '%' || unaccent(:q) || '%' THEN 2
+            ELSE 0
+        END +
+        CASE
+            WHEN ct.term IS NOT NULL THEN 5
+            ELSE 0
+        END
+    ) AS score
+FROM icd10 i
+LEFT JOIN clinical_terms ct
+    ON ct.icd10_code = i.code,
+    plainto_tsquery('spanish', unaccent(:q)) query
+WHERE
+    i.search_vector @@ query
+    OR i.description % :q
+    OR ct.term ILIKE '%' || :q || '%'
+ORDER BY score DESC
+LIMIT 20;
+"""
+
+    # AsyncSession requiere await; el patron es equivalente al solicitado.
+    result = await db.execute(text(sql), {"q": q})
+    return result.fetchall()

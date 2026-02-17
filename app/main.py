@@ -9,6 +9,7 @@ authentication, prescriptions, and frontend logic must not be added to this repo
 """
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.clinical.icd10.router import router as icd10_router
 from app.routers import clinical_icd10_search, clinical_search, intelligent_search, search_learning, search_suggestions
@@ -19,6 +20,20 @@ def create_app() -> FastAPI:
         title="Clinical Core",
         version="0.1.0",
         description="Reusable clinical engine APIs (ICD-10, future clinical modules).",
+    )
+
+    # TEMPORAL: usar ["*"] si CORS persiste
+    origins = [
+        "http://localhost:3000",
+        "https://clinical-core-cie10.vercel.app",
+    ]
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
     )
 
     app.include_router(icd10_router, prefix="/icd10", tags=["ICD-10"])
