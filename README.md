@@ -14,11 +14,12 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 Recommended start command:
 
 ```bash
-alembic upgrade head && python -m app.scripts.load_icd10 && uvicorn main:app --host 0.0.0.0 --port $PORT
+alembic upgrade head && python -m app.scripts.startup_bootstrap && uvicorn main:app --host 0.0.0.0 --port $PORT
 ```
 
 Notes:
 - The ICD-10 loader is idempotent: it exits if the `icd10` table already has rows.
+- Startup bootstrap enforces order: load ICD10 first, then rebuild/seed clinical dictionary.
 
 ## Verify data
 

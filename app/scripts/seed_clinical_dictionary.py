@@ -4,13 +4,15 @@ import argparse
 import logging
 import re
 
-from sqlalchemy import func
+from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.clinical.suggestions.service import normalize_query
 from app.db.session import SessionLocal
 from app.models.clinical_dictionary import ClinicalDictionary
+from app.models.icd10 import ICD10
+from app.services.icd10_state import check_icd10_loaded
 
 logger = logging.getLogger(__name__)
 _ICD_CODE_RE = re.compile(r"[^A-Z0-9]")
@@ -78,12 +80,23 @@ def seed_clinical_dictionary(batch_size: int = 200) -> None:
 
     db: Session = SessionLocal()
     try:
+        if not check_icd10_loaded(db):
+            logger.warning("ICD10 not loaded yet. Skipping clinical dictionary seed.")
+            return
+
+        existing_icd10_codes = {
+            _ICD_CODE_RE.sub("", str(code).strip().upper())
+            for code in db.execute(select(ICD10.code)).scalars().all()
+            if code
+        }
+
         seed_rows = _seed_terms()
         if not seed_rows:
             logger.info("No seed rows generated")
             return
 
         inserted_total = 0
+        skipped_missing_code_total = 0
 
         for start in range(0, len(seed_rows), batch_size):
             chunk = seed_rows[start : start + batch_size]
@@ -92,6 +105,10 @@ def seed_clinical_dictionary(batch_size: int = 200) -> None:
                 for r in chunk:
                     term = str(r["term"])
                     code = str(r["icd10_code"])
+                    if code not in existing_icd10_codes:
+                        skipped_missing_code_total += 1
+                        logger.warning("Skipping term '%s': ICD10 code '%s' not found", term, code)
+                        continue
                     exists = (
                         db.query(func.count())
                         .select_from(ClinicalDictionary)
@@ -117,13 +134,19 @@ def seed_clinical_dictionary(batch_size: int = 200) -> None:
 
                 inserted_total += len(objects)
                 logger.info("Seed progress: inserted=%s", inserted_total)
+                if skipped_missing_code_total:
+                    logger.info("Seed progress: skipped_missing_code=%s", skipped_missing_code_total)
 
             except SQLAlchemyError:
                 db.rollback()
                 logger.exception("Seed batch failed; aborting seed")
                 return
 
-        logger.info("Seed completed. inserted=%s", inserted_total)
+        logger.info(
+            "Seed completed. inserted=%s skipped_missing_code=%s",
+            inserted_total,
+            skipped_missing_code_total,
+        )
 
     except Exception:
         db.rollback()
