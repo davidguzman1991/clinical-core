@@ -54,10 +54,19 @@ def search_clinical_dictionary(
     clinical_dictionary = Table("clinical_dictionary", md, autoload_with=bind)
     clinical_search_logs = Table("clinical_search_logs", md, autoload_with=bind)
 
-    term_raw = clinical_dictionary.c.term_raw
-    term_norm = func.coalesce(clinical_dictionary.c.term_normalized, "")
-    category = clinical_dictionary.c.category
-    suggested_icd = getattr(clinical_dictionary.c, "suggested_icd", None)
+    term_col = getattr(clinical_dictionary.c, "term", None)
+    if term_col is None:
+        term_col = getattr(clinical_dictionary.c, "term_raw", None)
+    if term_col is None:
+        raise RuntimeError("clinical_dictionary must provide term/term_raw column")
+
+    term_norm = func.lower(func.coalesce(term_col, ""))
+    category_col = getattr(clinical_dictionary.c, "category", None)
+    category_expr = category_col if category_col is not None else literal(None)
+
+    suggested_icd = getattr(clinical_dictionary.c, "icd10_code", None)
+    if suggested_icd is None:
+        suggested_icd = getattr(clinical_dictionary.c, "suggested_icd", None)
 
     specialty_norm = normalize_query(specialty) if specialty is not None else None
 
@@ -77,8 +86,8 @@ def search_clinical_dictionary(
     )
 
     specialty_boost = (
-        case((func.lower(func.coalesce(category, "")) == specialty_norm, literal(0.05)), else_=literal(0.0))
-        if specialty_norm
+        case((func.lower(func.coalesce(category_col, "")) == specialty_norm, literal(0.05)), else_=literal(0.0))
+        if specialty_norm and category_col is not None
         else literal(0.0)
     )
 
@@ -92,15 +101,15 @@ def search_clinical_dictionary(
 
     base = (
         select(
-            term_raw.label("term"),
-            category.label("category"),
+            term_col.label("term"),
+            category_expr.label("category"),
             (suggested_icd.label("suggested_icd") if suggested_icd is not None else literal(None).label("suggested_icd")),
             score,
         )
         .select_from(clinical_dictionary.outerjoin(freq_cte, freq_cte.c.term_key == func.lower(term_norm)))
         .where(
             (term_norm.ilike(f"%{q}%"))
-            | (term_raw.ilike(f"%{q}%"))
+            | (term_col.ilike(f"%{q}%"))
             | ((sim > 0.2) if is_postgres and len(q) >= 3 else literal(False))
         )
         .order_by(score.desc(), term_norm.asc())
@@ -122,12 +131,12 @@ def search_clinical_dictionary(
         logger.exception("Similarity query failed; falling back to ILIKE-only search")
         fallback = (
             select(
-                term_raw.label("term"),
-                category.label("category"),
+                term_col.label("term"),
+                category_expr.label("category"),
                 (suggested_icd.label("suggested_icd") if suggested_icd is not None else literal(None).label("suggested_icd")),
             )
             .select_from(clinical_dictionary)
-            .where((term_norm.ilike(f"%{q}%")) | (term_raw.ilike(f"%{q}%")))
+            .where((term_norm.ilike(f"%{q}%")) | (term_col.ilike(f"%{q}%")))
             .order_by(term_norm.asc())
             .limit(limit)
             .offset(offset)

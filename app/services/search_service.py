@@ -43,30 +43,35 @@ class ClinicalSearchService:
             return []
 
         tokens = tokenize_normalized(normalized_query)
+        is_code_query = self.scoring_engine.is_icd_code_query(original_query)
 
-        dictionary_exact = self.repository.find_dictionary_exact(normalized_query)
-        exact_suggested_codes = sorted(
-            {
-                row.suggested_icd
-                for row in dictionary_exact
-                if row.suggested_icd
-            }
-        )
+        dictionary_exact = self.repository.find_dictionary_exact(normalized_query) if not is_code_query else []
+        exact_suggested_codes = sorted({row.icd10_code for row in dictionary_exact if row.icd10_code})
 
-        dictionary_synonyms = self.repository.find_dictionary_synonyms(
-            normalized_query,
-            tokens=tokens,
-            suggested_icds=exact_suggested_codes,
-            limit=max(20, limit * 2),
+        dictionary_synonyms = (
+            self.repository.find_dictionary_synonyms(
+                normalized_query,
+                tokens=tokens,
+                suggested_icds=exact_suggested_codes,
+                limit=max(20, limit * 2),
+            )
+            if not is_code_query
+            else []
         )
 
         synonym_terms: list[str] = []
         synonym_codes: list[str] = []
-        for row in dictionary_synonyms:
-            if row.term_normalized and row.term_normalized not in synonym_terms:
-                synonym_terms.append(row.term_normalized)
-            if row.suggested_icd and row.suggested_icd not in synonym_codes:
-                synonym_codes.append(row.suggested_icd)
+        synonym_code_priorities: dict[str, int] = {}
+        for row in dictionary_exact + dictionary_synonyms:
+            if row.term and row.term not in synonym_terms:
+                synonym_terms.append(row.term)
+            if row.icd10_code and row.icd10_code not in synonym_codes:
+                synonym_codes.append(row.icd10_code)
+            if row.icd10_code:
+                synonym_code_priorities[row.icd10_code] = max(
+                    synonym_code_priorities.get(row.icd10_code, 0),
+                    int(row.priority or 1),
+                )
 
         hybrid_candidates = self.repository.search_icd10_hybrid(
             normalized_query,
@@ -74,7 +79,10 @@ class ClinicalSearchService:
             normalized_code_query=normalized_code_query,
             limit=max(limit * 4, 40),
         )
-        mapped_candidates = self.repository.get_icd10_by_codes(synonym_codes)
+        mapped_candidates = self.repository.get_icd10_by_codes(
+            synonym_codes,
+            code_priorities=synonym_code_priorities,
+        )
         merged_candidates = self._merge_candidates(hybrid_candidates + mapped_candidates)
 
         usage = self.repository.get_usage_stats(
@@ -118,6 +126,7 @@ class ClinicalSearchService:
             existing.description_match = existing.description_match or candidate.description_match
             existing.synonym_match = existing.synonym_match or candidate.synonym_match
             existing.fuzzy_similarity = max(existing.fuzzy_similarity, candidate.fuzzy_similarity)
+            existing.dictionary_priority = max(existing.dictionary_priority, candidate.dictionary_priority)
 
         return list(by_code.values())
 
@@ -127,7 +136,7 @@ class ClinicalSearchService:
         candidates: list[ICD10Candidate],
         usage: dict[str, UsageStats],
     ) -> list[RankedICD10Result]:
-        ranked: list[RankedICD10Result] = []
+        ranked: list[tuple[int, RankedICD10Result]] = []
         for candidate in candidates:
             stats = usage.get(candidate.code)
             global_frequency = int(getattr(stats, "global_frequency", 0))
@@ -148,16 +157,19 @@ class ClinicalSearchService:
             )
             match_type = self._match_type(candidate)
             ranked.append(
-                RankedICD10Result(
-                    code=candidate.code,
-                    description=candidate.description,
-                    score=round(score, 4),
-                    match_type=match_type,
+                (
+                    max(int(getattr(candidate, "dictionary_priority", 0)), 0),
+                    RankedICD10Result(
+                        code=candidate.code,
+                        description=candidate.description,
+                        score=round(score, 4),
+                        match_type=match_type,
+                    ),
                 )
             )
 
-        ranked.sort(key=lambda x: (-x.score, x.code))
-        return ranked
+        ranked.sort(key=lambda item: (-item[0], -item[1].score, item[1].code))
+        return [item[1] for item in ranked]
 
     @staticmethod
     def _match_type(candidate: ICD10Candidate) -> str:

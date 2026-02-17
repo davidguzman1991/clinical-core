@@ -5,6 +5,7 @@ import logging
 from pathlib import Path
 import re
 import unicodedata
+from uuid import uuid4
 
 import pandas as pd
 from sqlalchemy import select
@@ -15,6 +16,7 @@ from app.db.session import SessionLocal
 from app.models.clinical_dictionary import ClinicalDictionary
 
 logger = logging.getLogger(__name__)
+_ICD_CODE_RE = re.compile(r"[^A-Z0-9]")
 
 
 def _configure_logging() -> None:
@@ -47,6 +49,12 @@ def _pick_column(df: pd.DataFrame, candidates: tuple[str, ...]) -> str | None:
     return None
 
 
+def _normalize_icd_code(value: object) -> str:
+    text = str(value) if value is not None else ""
+    text = text.strip().upper()
+    return _ICD_CODE_RE.sub("", text)
+
+
 def load_dictionary(
     csv_path: str = "app/data/clinical_dictionary_clean.csv",
     batch_size: int = 5000,
@@ -56,7 +64,7 @@ def load_dictionary(
     Safety/performance:
     - Uses pandas for parsing.
     - Inserts in batches with bulk_insert_mappings.
-    - Skips duplicates using term_normalized (per-batch DB check).
+    - Skips duplicates using (term, icd10_code) per-batch DB check.
     - Uses transactions (commit per batch) and rolls back on errors.
     """
 
@@ -68,47 +76,36 @@ def load_dictionary(
 
     df = pd.read_csv(path, dtype=str, encoding="utf-8")
 
-    # Support both formats:
-    # - Old: term_raw, term_normalized, category
-    # - New: term, specialty, suggested_icd
-    col_term_raw = _pick_column(df, ("term_raw", "term"))
-    col_term_norm = _pick_column(df, ("term_normalized",))
-    col_category = _pick_column(df, ("category", "specialty"))
-    col_suggested_icd = _pick_column(df, ("suggested_icd",))
+    col_term = _pick_column(df, ("term", "term_raw", "term_normalized"))
+    col_icd10 = _pick_column(df, ("icd10_code", "suggested_icd"))
+    col_priority = _pick_column(df, ("priority",))
 
-    if not col_term_raw:
-        raise ValueError("CSV must include 'term_raw' or 'term'")
+    if not col_term:
+        raise ValueError("CSV must include one of: term, term_raw, term_normalized")
+    if not col_icd10:
+        raise ValueError("CSV must include one of: icd10_code, suggested_icd")
 
-    term_raw_series = df[col_term_raw].fillna("").map(_normalize_text)
-    if col_term_norm:
-        term_norm_series = df[col_term_norm].fillna("").map(_normalize_text)
-    else:
-        term_norm_series = term_raw_series
-
-    if col_category:
-        category_series = df[col_category].fillna("").map(_normalize_text)
-    else:
-        category_series = pd.Series(["general"] * len(df))
-
-    category_series = category_series.replace("", "general")
-
-    if col_suggested_icd:
-        suggested_icd_series = df[col_suggested_icd].fillna("").map(_normalize_text)
-        suggested_icd_series = suggested_icd_series.replace("", None)
-    else:
-        suggested_icd_series = pd.Series([None] * len(df))
+    term_series = df[col_term].fillna("").map(_normalize_text)
+    icd10_series = df[col_icd10].fillna("").map(_normalize_icd_code)
+    priority_series = (
+        pd.to_numeric(df[col_priority], errors="coerce").fillna(1).astype(int)
+        if col_priority
+        else pd.Series([1] * len(df), dtype=int)
+    )
 
     normalized_df = pd.DataFrame(
         {
-            "term_raw": term_raw_series,
-            "term_normalized": term_norm_series,
-            "category": category_series,
-            "suggested_icd": suggested_icd_series,
+            "term": term_series,
+            "icd10_code": icd10_series,
+            "priority": priority_series,
         }
     )
 
-    normalized_df = normalized_df[(normalized_df["term_raw"] != "") & (normalized_df["term_normalized"] != "")]
-    normalized_df = normalized_df.drop_duplicates(subset=["term_normalized"], keep="first")
+    normalized_df = normalized_df[
+        (normalized_df["term"] != "")
+        & (normalized_df["icd10_code"] != "")
+    ]
+    normalized_df = normalized_df.drop_duplicates(subset=["term", "icd10_code"], keep="first")
 
     total = len(normalized_df)
     if total == 0:
@@ -126,39 +123,39 @@ def load_dictionary(
             end = min(start + batch_size, total)
             chunk = normalized_df.iloc[start:end]
 
-            norms = chunk["term_normalized"].tolist()
-            if not norms:
+            terms = chunk["term"].tolist()
+            codes = chunk["icd10_code"].tolist()
+            if not terms or not codes:
                 continue
 
             try:
                 with db.begin():
-                    existing = set(
+                    existing_pairs = set(
                         db.execute(
-                            select(ClinicalDictionary.term_normalized).where(
-                                ClinicalDictionary.term_normalized.in_(norms)
+                            select(ClinicalDictionary.term, ClinicalDictionary.icd10_code).where(
+                                ClinicalDictionary.term.in_(terms),
+                                ClinicalDictionary.icd10_code.in_(codes),
                             )
                         )
-                        .scalars()
                         .all()
                     )
 
                     mappings: list[dict[str, object]] = []
                     for row in chunk.itertuples(index=False):
-                        term_raw = getattr(row, "term_raw")
-                        term_normalized = getattr(row, "term_normalized")
-                        category = getattr(row, "category") or "general"
-                        suggested_icd = getattr(row, "suggested_icd")
+                        term = getattr(row, "term")
+                        icd10_code = getattr(row, "icd10_code")
+                        priority = int(getattr(row, "priority") or 1)
 
-                        if term_normalized in existing:
+                        if (term, icd10_code) in existing_pairs:
                             skipped_total += 1
                             continue
 
                         mappings.append(
                             {
-                                "term_raw": term_raw,
-                                "term_normalized": term_normalized,
-                                "category": category,
-                                "suggested_icd": suggested_icd,
+                                "id": str(uuid4()),
+                                "term": term,
+                                "icd10_code": icd10_code,
+                                "priority": priority,
                             }
                         )
 

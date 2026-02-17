@@ -56,14 +56,23 @@ def intelligent_search(
             autoload_with=bind,
         )
 
-        term_norm = func.coalesce(clinical_dictionary.c.term_normalized, "")
-        category = clinical_dictionary.c.category
+        term_col = getattr(clinical_dictionary.c, "term", None)
+        if term_col is None:
+            term_col = getattr(clinical_dictionary.c, "term_normalized", None)
+        if term_col is None:
+            term_col = getattr(clinical_dictionary.c, "term_raw", None)
+        if term_col is None:
+            raise HTTPException(status_code=500, detail="schema mismatch")
+
+        term_norm = func.lower(func.coalesce(term_col, ""))
+        category = getattr(clinical_dictionary.c, "category", None)
+        category_expr = category if category is not None else literal(None)
 
         # Base terms with similarity.
         base_terms = (
             select(
                 term_norm.label("term"),
-                category.label("category"),
+                category_expr.label("category"),
                 func.similarity(term_norm, query).label("sim"),
             )
             .where(term_norm != "")

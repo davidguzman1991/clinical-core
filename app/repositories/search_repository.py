@@ -13,9 +13,9 @@ from app.models.icd10 import ICD10
 
 @dataclass
 class DictionaryMatch:
-    term_raw: str
-    term_normalized: str
-    suggested_icd: str | None
+    term: str
+    icd10_code: str
+    priority: int
 
 
 @dataclass
@@ -27,6 +27,7 @@ class ICD10Candidate:
     description_match: bool
     fuzzy_similarity: float
     synonym_match: bool = False
+    dictionary_priority: int = 0
 
 
 @dataclass
@@ -45,30 +46,28 @@ class ClinicalSearchRepository:
         return getattr(dialect, "name", "") == "postgresql"
 
     def find_dictionary_exact(self, normalized_query: str) -> list[DictionaryMatch]:
-        term_raw = func.lower(func.coalesce(ClinicalDictionary.term_raw, ""))
-        term_normalized = func.lower(func.coalesce(ClinicalDictionary.term_normalized, ""))
+        term = func.lower(func.coalesce(ClinicalDictionary.term, ""))
+        priority = func.coalesce(ClinicalDictionary.priority, literal(1))
 
         stmt = (
             select(
-                ClinicalDictionary.term_raw,
-                ClinicalDictionary.term_normalized,
-                ClinicalDictionary.suggested_icd,
+                ClinicalDictionary.term,
+                ClinicalDictionary.icd10_code,
+                priority.label("priority"),
             )
             .where(
-                or_(
-                    term_raw == normalized_query,
-                    term_normalized == normalized_query,
-                )
+                term == normalized_query
             )
+            .order_by(priority.desc(), ClinicalDictionary.term.asc())
             .limit(25)
         )
 
         rows = self.db.execute(stmt).all()
         return [
             DictionaryMatch(
-                term_raw=r.term_raw,
-                term_normalized=r.term_normalized,
-                suggested_icd=r.suggested_icd,
+                term=r.term,
+                icd10_code=r.icd10_code,
+                priority=int(r.priority or 1),
             )
             for r in rows
         ]
@@ -81,23 +80,27 @@ class ClinicalSearchRepository:
         suggested_icds: Sequence[str],
         limit: int = 30,
     ) -> list[DictionaryMatch]:
+        term = func.lower(func.coalesce(ClinicalDictionary.term, ""))
+        priority = func.coalesce(ClinicalDictionary.priority, literal(1))
         token_conditions = [
-            ClinicalDictionary.term_normalized.ilike(f"%{token}%")
+            term.ilike(f"%{token}%")
             for token in tokens
             if token
         ]
 
         similarity_score = (
-            func.similarity(ClinicalDictionary.term_normalized, normalized_query)
+            func.similarity(term, normalized_query)
             if self.is_postgres and len(normalized_query) >= 3
             else literal(0.0)
         )
 
         conditions = []
+        if normalized_query:
+            conditions.append(term.ilike(f"%{normalized_query}%"))
         if token_conditions:
             conditions.append(or_(*token_conditions))
         if suggested_icds:
-            conditions.append(ClinicalDictionary.suggested_icd.in_(suggested_icds))
+            conditions.append(ClinicalDictionary.icd10_code.in_(suggested_icds))
         if self.is_postgres and len(normalized_query) >= 3:
             conditions.append(similarity_score > 0.25)
 
@@ -106,7 +109,7 @@ class ClinicalSearchRepository:
 
         preferred = (
             case(
-                (ClinicalDictionary.suggested_icd.in_(suggested_icds), literal(0)),
+                (ClinicalDictionary.icd10_code.in_(suggested_icds), literal(0)),
                 else_=literal(1),
             )
             if suggested_icds
@@ -115,24 +118,24 @@ class ClinicalSearchRepository:
 
         stmt = (
             select(
-                ClinicalDictionary.term_raw,
-                ClinicalDictionary.term_normalized,
-                ClinicalDictionary.suggested_icd,
+                ClinicalDictionary.term,
+                ClinicalDictionary.icd10_code,
+                priority.label("priority"),
             )
             .where(
-                ClinicalDictionary.term_normalized != "",
+                term != "",
                 or_(*conditions),
             )
-            .order_by(preferred.asc(), similarity_score.desc(), ClinicalDictionary.term_normalized.asc())
+            .order_by(preferred.asc(), priority.desc(), similarity_score.desc(), ClinicalDictionary.term.asc())
             .limit(limit)
         )
 
         rows = self.db.execute(stmt).all()
         return [
             DictionaryMatch(
-                term_raw=r.term_raw,
-                term_normalized=r.term_normalized,
-                suggested_icd=r.suggested_icd,
+                term=r.term,
+                icd10_code=r.icd10_code,
+                priority=int(r.priority or 1),
             )
             for r in rows
         ]
@@ -258,10 +261,16 @@ class ClinicalSearchRepository:
             for r in rows
         ]
 
-    def get_icd10_by_codes(self, codes: Sequence[str]) -> list[ICD10Candidate]:
+    def get_icd10_by_codes(
+        self,
+        codes: Sequence[str],
+        *,
+        code_priorities: Optional[dict[str, int]] = None,
+    ) -> list[ICD10Candidate]:
         if not codes:
             return []
 
+        priorities = code_priorities or {}
         stmt = select(ICD10.code, ICD10.description).where(ICD10.code.in_(codes))
         rows = self.db.execute(stmt).all()
         return [
@@ -273,6 +282,7 @@ class ClinicalSearchRepository:
                 description_match=False,
                 fuzzy_similarity=0.0,
                 synonym_match=True,
+                dictionary_priority=int(priorities.get(r.code, 0)),
             )
             for r in rows
         ]
