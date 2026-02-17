@@ -37,6 +37,41 @@ def normalize_icd10_official(code: str) -> str:
     return compact
 
 
+def map_root_to_billable(code: str) -> str:
+    root = normalize_icd10_official(code).split(".", 1)[0]
+    preferred = {
+        "E11": "E11.9",
+        "I50": "I50.9",
+        "I21": "I21.9",
+        "O24": "O24.4",
+    }
+    return preferred.get(root, f"{root}.9" if len(root) == 3 and root[0].isalpha() and root[1:3].isdigit() else root)
+
+
+def _resolve_billable_code(code: str, existing_codes: set[str]) -> str | None:
+    official = normalize_icd10_official(code)
+    if official in existing_codes:
+        return official
+
+    mapped = normalize_icd10_official(map_root_to_billable(official))
+    if mapped in existing_codes:
+        logger.info("Mapped ICD10 root '%s' to billable '%s'", code, mapped)
+        return mapped
+
+    root = official.split(".", 1)[0]
+    candidates = sorted(c for c in existing_codes if c.startswith(f"{root}."))
+    if not candidates:
+        return None
+
+    for candidate in candidates:
+        if candidate.endswith(".9"):
+            logger.info("Mapped ICD10 root '%s' to generic billable '%s'", code, candidate)
+            return candidate
+
+    logger.info("Mapped ICD10 root '%s' to first available billable '%s'", code, candidates[0])
+    return candidates[0]
+
+
 def upgrade() -> None:
     bind = op.get_bind()
     session = Session(bind=bind)
@@ -85,10 +120,10 @@ def upgrade() -> None:
         )
 
         seed_terms = [
-            ("diabetes", "E11", 10),
-            ("dm2", "E11", 9),
-            ("diabetes tipo 2", "E11", 10),
-            ("diabetes mellitus tipo 2", "E11", 10),
+            ("diabetes", "E11.9", 10),
+            ("dm2", "E11.9", 9),
+            ("diabetes tipo 2", "E11.9", 10),
+            ("diabetes mellitus tipo 2", "E11.9", 10),
             ("diabetes gestacional", "O24.4", 9),
             ("neuropatia diabetica", "E11.4", 8),
             ("pie diabetico", "E11.5", 8),
@@ -102,15 +137,15 @@ def upgrade() -> None:
 
         valid_rows = []
         for term, code, priority in seed_terms:
-            official_code = normalize_icd10_official(code)
-            if official_code not in existing_codes:
-                logger.warning("Skipping clinical_dictionary term '%s': ICD10 code '%s' not found", term, official_code)
+            resolved_code = _resolve_billable_code(code, existing_codes)
+            if not resolved_code:
+                logger.warning("Skipping clinical_dictionary term '%s': ICD10 code '%s' not found", term, code)
                 continue
             valid_rows.append(
                 {
                     "id": uuid4(),
                     "term": term.strip().lower(),
-                    "icd10_code": official_code,
+                    "icd10_code": resolved_code,
                     "priority": int(priority),
                     "created_at": datetime.now(timezone.utc),
                 }
