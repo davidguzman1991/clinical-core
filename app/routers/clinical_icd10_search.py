@@ -1,0 +1,104 @@
+"""Async clinical ICD-10 search router.
+
+Endpoint:
+- GET /clinical/icd10/search?q=...
+"""
+
+from __future__ import annotations
+
+from typing import List
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel
+from sqlalchemy import case, func, literal, or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.clinical.icd10.models import ICD10
+from app.db.async_session import get_async_db
+
+router = APIRouter(prefix="/clinical/icd10", tags=["clinical-icd10-search"])
+
+SIMILARITY_THRESHOLD = 0.2
+DEFAULT_LIMIT = 10
+MAX_LIMIT = 50
+
+
+class ICD10SearchResult(BaseModel):
+    code: str
+    description: str
+    score: float
+
+
+def _normalize_query(value: str) -> str:
+    return " ".join(value.strip().split())
+
+
+@router.get("/search", response_model=List[ICD10SearchResult])
+async def search_icd10(
+    q: str = Query(..., min_length=1, description="Clinical query (code or terms)"),
+    limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
+    db: AsyncSession = Depends(get_async_db),
+) -> List[ICD10SearchResult]:
+    query = _normalize_query(q)
+    if not query:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="q must not be empty",
+        )
+
+    code_query = query.upper()
+    use_similarity = len(query) >= 3
+    code_expr = func.coalesce(ICD10.code, "")
+    desc_expr = func.coalesce(ICD10.description, "")
+    terms_expr = func.coalesce(ICD10.search_terms, "")
+
+    exact_code_match = func.lower(code_expr) == func.lower(literal(code_query))
+    term_match = or_(
+        code_expr.ilike(f"%{query}%"),
+        desc_expr.ilike(f"%{query}%"),
+        terms_expr.ilike(f"%{query}%"),
+    )
+
+    similarity_score = (
+        func.greatest(
+            func.similarity(code_expr, code_query),
+            func.similarity(desc_expr, query),
+            func.similarity(terms_expr, query),
+        )
+        if use_similarity
+        else literal(0.0)
+    )
+    similarity_filter = (similarity_score > SIMILARITY_THRESHOLD) if use_similarity else literal(False)
+
+    rank_bucket = case(
+        (exact_code_match, literal(0)),
+        (term_match, literal(1)),
+        else_=literal(2),
+    )
+
+    score = case(
+        (exact_code_match, literal(3.0) + similarity_score),
+        (term_match, literal(2.0) + similarity_score),
+        else_=literal(1.0) + similarity_score,
+    ).label("score")
+
+    stmt = (
+        select(
+            ICD10.code.label("code"),
+            ICD10.description.label("description"),
+            score,
+        )
+        .where(or_(term_match, similarity_filter))
+        .order_by(rank_bucket.asc(), score.desc(), ICD10.code.asc())
+        .limit(limit)
+    )
+
+    rows = (await db.execute(stmt)).all()
+    return [
+        ICD10SearchResult(
+            code=row.code,
+            description=row.description,
+            score=float(row.score),
+        )
+        for row in rows
+    ]
