@@ -38,7 +38,8 @@ class ClinicalSearchService:
     ) -> list[RankedICD10Result]:
         original_query = query.strip()
         normalized_query = normalize_text(original_query)
-        if not normalized_query:
+        normalized_code_query = self.scoring_engine.normalize_icd_code(original_query).lower()
+        if not normalized_query and not normalized_code_query:
             return []
 
         tokens = tokenize_normalized(normalized_query)
@@ -70,6 +71,7 @@ class ClinicalSearchService:
         hybrid_candidates = self.repository.search_icd10_hybrid(
             normalized_query,
             expanded_terms=synonym_terms,
+            normalized_code_query=normalized_code_query,
             limit=max(limit * 4, 40),
         )
         mapped_candidates = self.repository.get_icd10_by_codes(synonym_codes)

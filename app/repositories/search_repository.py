@@ -142,24 +142,50 @@ class ClinicalSearchRepository:
         normalized_query: str,
         *,
         expanded_terms: Sequence[str],
+        normalized_code_query: str | None = None,
         limit: int,
     ) -> list[ICD10Candidate]:
+        normalized_code_query = (normalized_code_query or "").strip().lower()
+        if not normalized_query and not normalized_code_query:
+            return []
+
         terms: list[str] = []
-        for term in (normalized_query, *expanded_terms):
+        for term in (normalized_query, normalized_code_query, *expanded_terms):
             if term and term not in terms:
                 terms.append(term)
         terms = terms[:8]
 
-        code_l = func.lower(ICD10.code)
+        code_l = func.lower(func.coalesce(ICD10.code, ""))
+        code_compact = func.replace(func.replace(code_l, ".", ""), " ", "")
         desc_l = func.lower(ICD10.description)
         search_l = func.lower(func.coalesce(ICD10.search_terms, ""))
 
-        code_exact_match = code_l == normalized_query
+        code_exact_match_parts = []
+        if normalized_query:
+            code_exact_match_parts.append(code_l == normalized_query)
+        if normalized_code_query:
+            code_exact_match_parts.extend(
+                [
+                    code_l == normalized_code_query,
+                    code_compact == normalized_code_query,
+                ]
+            )
+        code_exact_match = or_(*code_exact_match_parts) if code_exact_match_parts else literal(False)
         exact_match = or_(code_exact_match, desc_l == normalized_query, search_l == normalized_query)
 
-        code_prefix_match = code_l.ilike(f"{normalized_query}%")
+        code_prefix_parts = []
+        if normalized_query:
+            code_prefix_parts.append(code_l.ilike(f"{normalized_query}%"))
+        if normalized_code_query:
+            code_prefix_parts.extend(
+                [
+                    code_l.ilike(f"{normalized_code_query}%"),
+                    code_compact.ilike(f"{normalized_code_query}%"),
+                ]
+            )
+        code_prefix_match = or_(*code_prefix_parts) if code_prefix_parts else literal(False)
         prefix_match = or_(
-            code_l.ilike(f"{normalized_query}%"),
+            code_prefix_match,
             desc_l.ilike(f"{normalized_query}%"),
             search_l.ilike(f"{normalized_query}%"),
         )
@@ -173,6 +199,7 @@ class ClinicalSearchRepository:
             *[
                 or_(
                     code_l.ilike(f"%{term}%"),
+                    code_compact.ilike(f"%{term}%"),
                     desc_l.ilike(f"%{term}%"),
                     search_l.ilike(f"%{term}%"),
                 )
