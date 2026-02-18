@@ -147,6 +147,16 @@ async def search_icd10(
 ) -> list:
     raw_q = q
     normalized_q = normalize_icd_input(q)
+    compact_q = "".join((normalized_q or "").split())
+
+    if len(compact_q) < 2:
+        logger.warning(
+            "/clinical/icd10/search query_too_short_blocked raw_query=%r normalized_query=%r",
+            raw_q,
+            normalized_q,
+        )
+        return []
+
     logger.warning(
         "/clinical/icd10/search raw_query=%r normalized_query=%r limit=%s use_extended=%s",
         raw_q,
@@ -166,6 +176,10 @@ async def search_icd10(
             if extended_results:
                 return extended_results
         except Exception:
+            try:
+                await db.rollback()
+            except Exception:
+                logger.exception("Extended ICD10 rollback failed")
             logger.exception("Extended ICD10 search failed; falling back to legacy icd10 search")
 
     # Fallback: original icd10 table logic
@@ -178,6 +192,10 @@ async def search_icd10(
         )
         return legacy_results
     except Exception:
+        try:
+            await db.rollback()
+        except Exception:
+            logger.exception("Legacy ICD10 rollback failed")
         logger.exception("Legacy ICD10 search failed; returning []")
         return []
 
