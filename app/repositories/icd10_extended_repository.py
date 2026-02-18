@@ -18,7 +18,7 @@ import re
 from dataclasses import dataclass, field
 from typing import List, Optional, Sequence
 
-from sqlalchemy import Column, Float, Integer, MetaData, String, Table, Text, func, literal, or_, select, text
+from sqlalchemy import Column, Float, Integer, MetaData, String, Table, Text, cast, func, literal, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.search_config import search_tuning
@@ -158,7 +158,7 @@ class ICD10ExtendedRepository:
         code_compact = func.replace(func.replace(func.upper(code_col), ".", ""), " ", "")
         desc_norm = func.coalesce(t.c.description_normalized, "")
         search_txt = func.coalesce(t.c.search_text, "")
-        priority_col = func.coalesce(t.c.priority, 0)
+        priority_col = func.coalesce(cast(t.c.priority, Float), literal(0.0))
 
         code_upper = func.upper(compact_query)
         compact_code_query = compact_query.replace(".", "").upper()
