@@ -221,6 +221,16 @@ class ClinicalSearchEngine:
                 use_similarity,
                 fallback_triggered,
             )
+            logger.warning(
+                "clinical_search_engine.search extended_results=%s query=%r",
+                len(results),
+                query_for_repo,
+            )
+            if not results:
+                logger.warning(
+                    "clinical_search_engine.search extended_results=0 -> fallback_to_legacy=1 query=%r",
+                    query_for_repo,
+                )
 
             return results
         except Exception:
@@ -229,6 +239,10 @@ class ClinicalSearchEngine:
             except Exception:
                 logger.exception("clinical_search_engine.search rollback failed")
             logger.exception("ICD10 extended search failed, switching to fallback")
+            logger.warning(
+                "clinical_search_engine.search extended_results=0 -> fallback_to_legacy=1 query=%r cause=exception",
+                raw_query,
+            )
             logger.exception("clinical_search_engine.search failed; returning []")
             return []
 
