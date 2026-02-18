@@ -180,7 +180,7 @@ async def search_icd10(
                 await db.rollback()
             except Exception:
                 logger.exception("Extended ICD10 rollback failed")
-            logger.exception("Extended ICD10 search failed; falling back to legacy icd10 search")
+            logger.exception("ICD10 extended search failed, switching to fallback")
 
     # Fallback: original icd10 table logic
     try:

@@ -228,6 +228,7 @@ class ClinicalSearchEngine:
                 await self._db.rollback()
             except Exception:
                 logger.exception("clinical_search_engine.search rollback failed")
+            logger.exception("ICD10 extended search failed, switching to fallback")
             logger.exception("clinical_search_engine.search failed; returning []")
             return []
 

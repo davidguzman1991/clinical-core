@@ -154,7 +154,10 @@ class ICD10ExtendedRepository:
         query_is_code = query_is_code or bool(ICD_CODE_QUERY_RE.match(compact_query))
 
         t = self._table
-        threshold = search_tuning.similarity_threshold
+        try:
+            threshold = float(search_tuning.similarity_threshold or 0.2)
+        except (TypeError, ValueError):
+            threshold = 0.2
 
         code_col = func.coalesce(t.c.code, "")
         code_compact = func.replace(func.replace(func.upper(code_col), ".", ""), " ", "")
@@ -236,10 +239,14 @@ class ICD10ExtendedRepository:
             result = await self._db.execute(stmt)
             rows = result.all()
         except Exception:
+            try:
+                await self._db.rollback()
+            except Exception:
+                logger.exception("icd10_extended.search_candidates rollback failed")
             # Safe fallback: if similarity / expression compilation fails,
             # return a strict exact/prefix code search instead of raising 500.
             logger.exception(
-                "icd10_extended.search_candidates primary query failed; falling back to exact/prefix code search"
+                "ICD10 extended search failed, switching to fallback"
             )
             fallback_stmt = (
                 select(
@@ -261,6 +268,10 @@ class ICD10ExtendedRepository:
                 fallback_result = await self._db.execute(fallback_stmt)
                 rows = fallback_result.all()
             except Exception:
+                try:
+                    await self._db.rollback()
+                except Exception:
+                    logger.exception("icd10_extended.search_candidates fallback rollback failed")
                 logger.exception("icd10_extended.search_candidates fallback query failed; returning []")
                 return []
         logger.warning(
