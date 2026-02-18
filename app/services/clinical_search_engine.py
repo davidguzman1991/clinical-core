@@ -174,11 +174,22 @@ class ClinicalSearchEngine:
                 tags_filter=tags_filter,
                 query_is_code=is_code_query,
             )
+            fallback_triggered = False
+            if not candidates:
+                fallback_triggered = True
+                candidates = await repo.search_candidates(
+                    query_for_repo,
+                    limit=candidate_limit,
+                    tags_filter=tags_filter,
+                    query_is_code=is_code_query,
+                    force_no_similarity=True,
+                )
             logger.warning(
-                "clinical_search_engine.search candidates=%s query=%r query_type=%s",
+                "clinical_search_engine.search candidates=%s query=%r query_type=%s fallback_triggered=%s",
                 len(candidates),
                 query_for_repo,
                 "code" if is_code_query else "natural_language",
+                fallback_triggered,
             )
 
             source = "icd10_extended"
@@ -203,6 +214,12 @@ class ClinicalSearchEngine:
                     top_code=results[0].code if results else None,
                     top_score=results[0].score if results else None,
                 )
+            )
+            logger.warning(
+                "clinical_search_engine.search result_count=%s similarity_used=%s fallback_triggered=%s",
+                len(results),
+                use_similarity,
+                fallback_triggered,
             )
 
             return results

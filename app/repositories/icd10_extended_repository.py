@@ -119,6 +119,7 @@ class ICD10ExtendedRepository:
         *,
         tags_filter: Optional[Sequence[str]] = None,
         query_is_code: bool = False,
+        force_no_similarity: bool = False,
     ) -> List[ExtendedICD10Candidate]:
         """Search icd10_extended using trigram similarity + ILIKE + priority.
 
@@ -137,12 +138,13 @@ class ICD10ExtendedRepository:
         List of ``ExtendedICD10Candidate`` ordered by composite score desc.
         """
         logger.warning(
-            "icd10_extended.search_candidates raw_query=%r query_len=%s limit=%s tags_filter=%r query_is_code=%s",
+            "icd10_extended.search_candidates raw_query=%r query_len=%s limit=%s tags_filter=%r query_is_code=%s force_no_similarity=%s",
             query,
             len(query or ""),
             limit,
             tags_filter,
             query_is_code,
+            force_no_similarity,
         )
         if not query:
             logger.warning("icd10_extended.search_candidates query is empty; returning []")
@@ -172,12 +174,12 @@ class ICD10ExtendedRepository:
         )
 
         # --- trigram similarity (requires pg_trgm) --------------------------------
-        use_similarity = (len(query) >= 3) and (not query_is_code)
+        use_similarity = (len(query) >= 3) and (not query_is_code) and (not force_no_similarity)
         logger.warning(
-            "icd10_extended.search_candidates query_type=%s similarity_threshold=%.3f use_similarity=%s",
+            "icd10_extended.search_candidates query_type=%s similarity_used=%s similarity_threshold=%.3f",
             "code" if query_is_code else "natural_language",
-            threshold,
             use_similarity,
+            threshold,
         )
         if use_similarity:
             sim_score = func.greatest(
@@ -187,18 +189,24 @@ class ICD10ExtendedRepository:
         else:
             sim_score = literal(0.0)
 
-        sim_filter = (sim_score > threshold) if use_similarity else literal(False)
-
         # --- composite ordering score ---------------------------------------------
         # priority_boost:  higher priority rows surface first
         # sim_score:       trigram similarity for fuzzy matches
         # exact / prefix:  strong boosts for code-level matches
         score = (
-            literal(3.0) * func.cast(exact_code, Float)
-            + literal(2.0) * func.cast(prefix_code, Float)
-            + literal(1.5) * func.cast(desc_match, Float)
-            + sim_score
-            + literal(0.1) * func.cast(priority_col, Float)
+            (
+                literal(3.0) * func.cast(exact_code, Float)
+                + literal(2.0) * func.cast(prefix_code, Float)
+                + literal(0.1) * func.cast(priority_col, Float)
+            )
+            if query_is_code
+            else (
+                literal(3.0) * func.cast(exact_code, Float)
+                + literal(2.0) * func.cast(prefix_code, Float)
+                + literal(1.5) * func.cast(desc_match, Float)
+                + sim_score
+                + literal(0.1) * func.cast(priority_col, Float)
+            )
         ).label("_rank_score")
 
         stmt = (
@@ -213,7 +221,7 @@ class ICD10ExtendedRepository:
                 prefix_code.label("prefix_match"),
                 desc_match.label("description_match"),
             )
-            .where(or_(exact_code, prefix_code) if query_is_code else or_(exact_code, prefix_code, desc_match, sim_filter))
+            .where(or_(exact_code, prefix_code) if query_is_code else or_(exact_code, prefix_code, desc_match))
             .order_by(score.desc(), t.c.code.asc())
             .limit(limit)
         )
