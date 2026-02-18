@@ -1,21 +1,32 @@
 """Async clinical ICD-10 search router.
 
-Endpoint:
+Endpoints:
 - GET /clinical/icd10/search?q=...
+- GET /clinical/icd10/search-advanced?q=...
+
+When the feature flag ``USE_EXTENDED_ICD10=true`` is set, the ``/search``
+endpoint delegates to :class:`ClinicalSearchEngine` which queries the
+optimised ``icd10_extended`` table.  Otherwise the original ``icd10``-based
+logic is used as a transparent fallback.
 """
 
 from __future__ import annotations
 
+import logging
 import re
-from typing import List
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import case, func, literal, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.clinical.icd10.models import ICD10
+from app.core.search_config import search_feature_flags
 from app.db.async_session import get_async_db
+from app.services.clinical_search_engine import ClinicalSearchEngine
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/clinical/icd10", tags=["clinical-icd10-search"])
 
@@ -28,6 +39,17 @@ class ICD10SearchResult(BaseModel):
     code: str
     description: str
     score: float
+
+
+class ICD10ExtendedSearchResult(BaseModel):
+    """Rich result returned when icd10_extended is the active source."""
+
+    code: str
+    label: str
+    score: float
+    source: str = "icd10_extended"
+    match_features: dict = Field(default_factory=dict)
+    explanation: str = ""
 
 
 def _normalize_query(value: str) -> str:
@@ -117,15 +139,72 @@ async def _run_icd10_search(
     ]
 
 
-@router.get("/search", response_model=List[ICD10SearchResult])
+@router.get("/search")
 async def search_icd10(
     q: str = Query(..., min_length=1, description="Clinical query (code or terms)"),
     limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
     db: AsyncSession = Depends(get_async_db),
-) -> List[ICD10SearchResult]:
-    # Normalizacion previa compatible con texto y codigo ICD-10.
-    q = normalize_icd_input(q)
-    return await _run_icd10_search(q=q, limit=limit, db=db)
+) -> list:
+    raw_q = q
+    normalized_q = normalize_icd_input(q)
+    logger.warning(
+        "/clinical/icd10/search raw_query=%r normalized_query=%r limit=%s use_extended=%s",
+        raw_q,
+        normalized_q,
+        limit,
+        search_feature_flags.use_extended_icd10,
+    )
+
+    if search_feature_flags.use_extended_icd10:
+        try:
+            extended_results = await _run_extended_search(q=normalized_q, limit=limit, db=db)
+            logger.warning(
+                "/clinical/icd10/search extended_results=%s query=%r",
+                len(extended_results),
+                normalized_q,
+            )
+            if extended_results:
+                return extended_results
+        except Exception:
+            logger.exception("Extended ICD10 search failed; falling back to legacy icd10 search")
+
+    # Fallback: original icd10 table logic
+    legacy_results = await _run_icd10_search(q=normalized_q, limit=limit, db=db)
+    logger.warning(
+        "/clinical/icd10/search legacy_results=%s query=%r",
+        len(legacy_results),
+        normalized_q,
+    )
+    return legacy_results
+
+
+async def _run_extended_search(
+    q: str,
+    limit: int,
+    db: AsyncSession,
+) -> List[dict]:
+    """Delegate to the unified ClinicalSearchEngine (icd10_extended)."""
+    engine = ClinicalSearchEngine(db)
+    results = await engine.search(q, limit=limit)
+    return [
+        {
+            "code": r.code,
+            "label": r.label,
+            "score": r.score,
+            "source": r.source,
+            "match_features": {
+                "exact_code": r.match_features.exact_code,
+                "prefix_code": r.match_features.prefix_code,
+                "description_match": r.match_features.description_match,
+                "trigram_similarity": r.match_features.trigram_similarity,
+                "priority": r.match_features.priority,
+                "intent_aligned": r.match_features.intent_aligned,
+                "tag_matched": r.match_features.tag_matched,
+            },
+            "explanation": r.explanation,
+        }
+        for r in results
+    ]
 
 
 @router.get("/search-advanced")
