@@ -278,15 +278,11 @@ class ICD10ExtendedRepository:
             "desc_query": f"%{query}%",
             "similarity_threshold": threshold,
         }
-        expected_binds = {
-            "query",
-            "compact_query",
-            "compact_code_query",
-            "prefix_query",
-            "compact_prefix_query",
-            "desc_query",
-            "similarity_threshold",
-        }
+        expected_binds = {"desc_query"}
+        if query_is_code:
+            expected_binds.update({"compact_code_query", "compact_prefix_query"})
+        if use_similarity:
+            expected_binds.add("query")
         missing_binds = expected_binds - set(params.keys())
         if missing_binds:
             logger.warning(

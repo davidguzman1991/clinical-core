@@ -165,16 +165,23 @@ async def search_icd10(
         search_feature_flags.use_extended_icd10,
     )
 
+    use_extended = bool(search_feature_flags.use_extended_icd10)
     fallback_to_legacy = False
-    if search_feature_flags.use_extended_icd10:
+    extended_results_count = 0
+    legacy_results_count = 0
+    if use_extended:
         try:
             extended_results = await _run_extended_search(q=normalized_q, limit=limit, db=db)
-            logger.warning(
-                "/clinical/icd10/search extended_results=%s query=%r",
-                len(extended_results),
-                normalized_q,
-            )
+            extended_results_count = len(extended_results)
             if extended_results:
+                logger.warning(
+                    "/clinical/icd10/search use_extended=%s extended_results=%s fallback_to_legacy=%s legacy_results=%s normalized_q=%r",
+                    use_extended,
+                    extended_results_count,
+                    int(fallback_to_legacy),
+                    legacy_results_count,
+                    normalized_q,
+                )
                 return extended_results
             fallback_to_legacy = True
         except Exception:
@@ -185,18 +192,16 @@ async def search_icd10(
             logger.exception("ICD10 extended search failed, switching to fallback")
             fallback_to_legacy = True
 
-    if fallback_to_legacy:
-        logger.warning(
-            "/clinical/icd10/search fallback_to_legacy=1 query=%r",
-            normalized_q,
-        )
-
     # Fallback: original icd10 table logic
     try:
         legacy_results = await _run_icd10_search(q=normalized_q, limit=limit, db=db)
+        legacy_results_count = len(legacy_results)
         logger.warning(
-            "/clinical/icd10/search legacy_results=%s query=%r",
-            len(legacy_results),
+            "/clinical/icd10/search use_extended=%s extended_results=%s fallback_to_legacy=%s legacy_results=%s normalized_q=%r",
+            use_extended,
+            extended_results_count,
+            int(fallback_to_legacy),
+            legacy_results_count,
             normalized_q,
         )
         return legacy_results
@@ -205,6 +210,14 @@ async def search_icd10(
             await db.rollback()
         except Exception:
             logger.exception("Legacy ICD10 rollback failed")
+        logger.warning(
+            "/clinical/icd10/search use_extended=%s extended_results=%s fallback_to_legacy=%s legacy_results=%s normalized_q=%r",
+            use_extended,
+            extended_results_count,
+            int(fallback_to_legacy),
+            legacy_results_count,
+            normalized_q,
+        )
         logger.exception("Legacy ICD10 search failed; returning []")
         return []
 

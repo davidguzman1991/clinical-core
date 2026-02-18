@@ -240,7 +240,7 @@ class ClinicalSearchEngine:
                 logger.exception("clinical_search_engine.search rollback failed")
             logger.exception("ICD10 extended search failed, switching to fallback")
             logger.warning(
-                "clinical_search_engine.search extended_results=0 -> fallback_to_legacy=1 query=%r cause=exception",
+                "clinical_search_engine.search fallback_to_legacy=1 cause=exception query=%r",
                 raw_query,
             )
             logger.exception("clinical_search_engine.search failed; returning []")
