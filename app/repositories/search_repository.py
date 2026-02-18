@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Optional, Sequence
 
@@ -9,6 +10,9 @@ from sqlalchemy.orm import Session
 from app.models.clinical_dictionary import ClinicalDictionary
 from app.models.clinical_search_log import ClinicalSearchLog
 from app.models.icd10 import ICD10
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -82,17 +86,14 @@ class ClinicalSearchRepository:
     ) -> list[DictionaryMatch]:
         term = func.lower(func.coalesce(ClinicalDictionary.term, ""))
         priority = func.coalesce(ClinicalDictionary.priority, literal(1))
+        use_similarity = self.is_postgres and len(normalized_query) >= 3
         token_conditions = [
             term.ilike(f"%{token}%")
             for token in tokens
             if token
         ]
 
-        similarity_score = (
-            func.similarity(term, normalized_query)
-            if self.is_postgres and len(normalized_query) >= 3
-            else literal(0.0)
-        )
+        similarity_score = func.similarity(term, normalized_query) if use_similarity else None
 
         conditions = []
         if normalized_query:
@@ -101,7 +102,7 @@ class ClinicalSearchRepository:
             conditions.append(or_(*token_conditions))
         if suggested_icds:
             conditions.append(ClinicalDictionary.icd10_code.in_(suggested_icds))
-        if self.is_postgres and len(normalized_query) >= 3:
+        if use_similarity and similarity_score is not None:
             conditions.append(similarity_score > 0.25)
 
         if not conditions:
@@ -113,8 +114,15 @@ class ClinicalSearchRepository:
                 else_=literal(1),
             )
             if suggested_icds
-            else literal(1)
+            else None
         )
+
+        order_by_clauses = [priority.desc()]
+        if preferred is not None:
+            order_by_clauses.insert(0, preferred.asc())
+        if use_similarity and similarity_score is not None:
+            order_by_clauses.append(similarity_score.desc())
+        order_by_clauses.append(ClinicalDictionary.term.asc())
 
         stmt = (
             select(
@@ -126,11 +134,16 @@ class ClinicalSearchRepository:
                 term != "",
                 or_(*conditions),
             )
-            .order_by(preferred.asc(), priority.desc(), similarity_score.desc(), ClinicalDictionary.term.asc())
+            .order_by(*order_by_clauses)
             .limit(limit)
         )
 
-        rows = self.db.execute(stmt).all()
+        try:
+            rows = self.db.execute(stmt).all()
+        except Exception:
+            logger.exception("find_dictionary_synonyms failed; returning empty list")
+            return []
+
         return [
             DictionaryMatch(
                 term=r.term,
