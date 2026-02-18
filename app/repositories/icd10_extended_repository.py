@@ -286,6 +286,312 @@ class ICD10ExtendedRepository:
             "desc_query": f"%{query}%",
             "similarity_threshold": threshold,
         }
+        # Debug: ensure all expected binds are present (lightweight, no exceptions)
+        expected_binds = {"query", "compact_query", "compact_code_query", "prefix_query", "compact_prefix_query", "desc_query", "similarity_threshold"}
+        missing_binds = expected_binds - set(params.keys())
+        if missing_binds:
+            logger.warning(
+                "icd10_extended.search_candidates missing bind params: %s; query=%r",
+                sorted(missing_binds),
+                query,
+            )
+        # Debug: ensure all expected binds are present (lightweight, no exceptions)
+        expected_binds = {"query", "compact_query", "compact_code_query", "prefix_query", "compact_prefix_query", "desc_query", "similarity_threshold"}
+        missing_binds = expected_binds - set(params.keys())
+        if missing_binds:
+            logger.warning(
+                "icd10_extended.search_candidates missing bind params: %s; query=%r",
+                sorted(missing_binds),
+                query,
+            )
+        # Debug: ensure all expected binds are present (lightweight, no exceptions)
+        expected_binds = {"query", "compact_query", "compact_code_query", "prefix_query", "compact_prefix_query", "desc_query", "similarity_threshold"}
+        missing_binds = expected_binds - set(params.keys())
+        if missing_binds:
+            logger.warning(
+                "icd10_extended.search_candidates missing bind params: %s; query=%r",
+                sorted(missing_binds),
+                query,
+            )
+        # Debug: ensure all expected binds are present (lightweight, no exceptions)
+        expected_binds = {"query", "compact_query", "compact_code_query", "prefix_query", "compact_prefix_query", "desc_query", "similarity_threshold"}
+        missing_binds = expected_binds - set(params.keys())
+        if missing_binds:
+            logger.warning(
+                "icd10_extended.search_candidates missing bind params: %s; query=%r",
+                sorted(missing_binds),
+                query,
+            )
+        # Debug: ensure all expected binds are present (lightweight, no exceptions)
+        expected_binds = {"query", "compact_query", "compact_code_query", "prefix_query", "compact_prefix_query", "desc_query", "similarity_threshold"}
+        missing_binds = expected_binds - set(params.keys())
+        if missing_binds:
+            logger.warning(
+                "icd10_extended.search_candidates missing bind params: %s; query=%r",
+                sorted(missing_binds),
+                query,
+            )
+        # Debug: ensure all expected binds are present (lightweight, no exceptions)
+        expected_binds = {"query", "compact_query", "compact_code_query", "prefix_query", "compact_prefix_query", "desc_query", "similarity_threshold"}
+        missing_binds = expected_binds - set(params.keys())
+        if missing_binds:
+            logger.warning(
+                "icd10_extended.search_candidates missing bind params: %s; query=%r",
+                sorted(missing_binds),
+                query,
+            )
+        # Debug: ensure all expected binds are present (lightweight, no exceptions)
+        expected_binds = {"query", "compact_query", "compact_code_query", "prefix_query", "compact_prefix_query", "desc_query", "similarity_threshold"}
+        missing_binds = expected_binds - set(params.keys())
+        if missing_binds:
+            logger.warning(
+                "icd10_extended.search_candidates missing bind params: %s; query=%r",
+                sorted(missing_binds),
+                query,
+            )
+        # Debug: ensure all expected binds are present (lightweight, no exceptions)
+        expected_binds = {"query", "compact_query", "compact_code_query", "prefix_query", "compact_prefix_query", "desc_query", "similarity_threshold"}
+        missing_binds = expected_binds - set(params.keys())
+        if missing_binds:
+            logger.warning(
+                "icd10_extended.search_candidates missing bind params: %s; query=%r",
+                sorted(missing_binds),
+                query,
+            )
+        # Debug: ensure all expected binds are present (lightweight, no exceptions)
+        expected_binds = {"query", "compact_query", "compact_code_query", "prefix_query", "compact_prefix_query", "desc_query", "similarity_threshold"}
+        missing_binds = expected_binds - set(params.keys())
+        if missing_binds:
+            logger.warning(
+                "icd10_extended.search_candidates missing bind params: %s; query=%r",
+                sorted(missing_binds),
+                query,
+            )
+        # Debug: ensure all expected binds are present (lightweight, no exceptions)
+        expected_binds = {"query", "compact_query", "compact_code_query", "prefix_query", "compact_prefix_query", "desc_query", "similarity_threshold"}
+        missing_binds = expected_binds - set(params.keys())
+        if missing_binds:
+            logger.warning(
+                "icd10_extended.search_candidates missing bind params: %s; query=%r",
+                sorted(missing_binds),
+                query,
+            )
+        # Debug: ensure all expected binds are present (lightweight, no exceptions)
+        expected_binds = {"query", "compact_query", "compact_code_query", "prefix_query", "compact_prefix_query", "desc_query", "similarity_threshold"}
+        missing_binds = expected_binds - set(params.keys())
+        if missing_binds:
+            logger.warning(
+                "icd10_extended.search_candidates missing bind params: %s; query=%r",
+                sorted(missing_binds),
+                query,
+            )
+        # Debug: ensure all expected binds are present (lightweight, no exceptions)
+        expected_binds = {"query", "compact_query", "compact_code_query", "prefix_query", "compact_prefix_query", "desc_query", "similarity_threshold"}
+        missing_binds = expected_binds - set(params.keys())
+        if missing_binds:
+            logger.warning(
+                "icd10_extended.search_candidates missing bind params: %s; query=%r",
+                sorted(missing_binds),
+                query,
+            )
+        # Debug: ensure all expected binds are present (lightweight, no exceptions)
+        expected_binds = {"query", "compact_query", "compact_code_query", "prefix_query", "compact_prefix_query", "desc_query", "similarity_threshold"}
+        missing_binds = expected_binds - set(params.keys())
+        if missing_binds:
+            logger.warning(
+                "icd10_extended.search_candidates missing bind params: %s; query=%r",
+                sorted(missing_binds),
+                query,
+            )
+        # Debug: ensure all expected binds are present (lightweight, no exceptions)
+        expected_binds = {"query", "compact_query", "compact_code_query", "prefix_query", "compact_prefix_query", "desc_query", "similarity_threshold"}
+        missing_binds = expected_binds - set(params.keys())
+        if missing_binds:
+            logger.warning(
+                "icd10_extended.search_candidates missing bind params: %s; query=%r",
+                sorted(missing_binds),
+                query,
+            )
+        # Debug: ensure all expected binds are present (lightweight, no exceptions)
+        expected_binds = {"query", "compact_query", "compact_code_query", "prefix_query", "compact_prefix_query", "desc_query", "similarity_threshold"}
+        missing_binds = expected_binds - set(params.keys())
+        if missing_binds:
+            logger.warning(
+                "icd10_extended.search_candidates missing bind params: %s; query=%r",
+                sorted(missing_binds),
+                query,
+            )
+        # Debug: ensure all expected binds are present (lightweight, no exceptions)
+        expected_binds = {"query", "compact_query", "compact_code_query", "prefix_query", "compact_prefix_query", "desc_query", "similarity_threshold"}
+        missing_binds = expected_binds - set(params.keys())
+        if missing_binds:
+            logger.warning(
+                "icd10_extended.search_candidates missing bind params: %s; query=%r",
+                sorted(missing_binds),
+                query,
+            )
+        # Debug: ensure all expected binds are present (lightweight, no exceptions)
+        expected_binds = {"query", "compact_query", "compact_code_query", "prefix_query", "compact_prefix_query", "desc_query", "similarity_threshold"}
+        missing_binds = expected_binds - set(params.keys())
+        if missing_binds:
+            logger.warning(
+                "icd10_extended.search_candidates missing bind params: %s; query=%r",
+                sorted(missing_binds),
+                query,
+            )
+        # Debug: ensure all expected binds are present (lightweight, no exceptions)
+        expected_binds = {"query", "compact_query", "compact_code_query", "prefix_query", "compact_prefix_query", "desc_query", "similarity_threshold"}
+        missing_binds = expected_binds - set(params.keys())
+        if missing_binds:
+            logger.warning(
+                "icd10_extended.search_candidates missing bind params: %s; query=%r",
+                sorted(missing_binds),
+                query,
+            )
+        # Debug: ensure all expected binds are present (lightweight, no exceptions)
+        expected_binds = {"query", "compact_query", "compact_code_query", "prefix_query", "compact_prefix_query", "desc_query", "similarity_threshold"}
+        missing_binds = expected_binds - set(params.keys())
+        if missing_binds:
+            logger.warning(
+                "icd10_extended.search_candidates missing bind params: %s; query=%r",
+                sorted(missing_binds),
+                query,
+            )
+        # Debug: ensure all expected binds are present (lightweight, no exceptions)
+        expected_binds = {"query", "compact_query", "compact_code_query", "prefix_query", "compact_prefix_query", "desc_query", "similarity_threshold"}
+        missing_binds = expected_binds - set(params.keys())
+        if missing_binds:
+            logger.warning(
+                "icd10_extended.search_candidates missing bind params: %s; query=%r",
+                sorted(missing_binds),
+                query,
+            )
+        # Debug: ensure all expected binds are present (lightweight, no exceptions)
+        expected_binds = {"query", "compact_query", "compact_code_query", "prefix_query", "compact_prefix_query", "desc_query", "similarity_threshold"}
+        missing_binds = expected_binds - set(params.keys())
+        if missing_binds:
+            logger.warning(
+                "icd10_extended.search_candidates missing bind params: %s; query=%r",
+                sorted(missing_binds),
+                query,
+            )
+        # Debug: ensure all expected binds are present (lightweight, no exceptions)
+        expected_binds = {"query", "compact_query", "compact_code_query", "prefix_query", "compact_prefix_query", "desc_query", "similarity_threshold"}
+        missing_binds = expected_binds - set(params.keys())
+        if missing_binds:
+            logger.warning(
+                "icd10_extended.search_candidates missing bind params: %s; query=%r",
+                sorted(missing_binds),
+                query,
+            )
+        # Debug: ensure all expected binds are present (lightweight, no exceptions)
+        expected_binds = {"query", "compact_query", "compact_code_query", "prefix_query", "compact_prefix_query", "desc_query", "similarity_threshold"}
+        missing_binds = expected_binds - set(params.keys())
+        if missing_binds:
+            logger.warning(
+                "icd10_extended.search_candidates missing bind params: %s; query=%r",
+                sorted(missing_binds),
+                query,
+            )
+        # Debug: ensure all expected binds are present (lightweight, no exceptions)
+        expected_binds = {"query", "compact_query", "compact_code_query", "prefix_query", "compact_prefix_query", "desc_query", "similarity_threshold"}
+        missing_binds = expected_binds - set(params.keys())
+        if missing_binds:
+            logger.warning(
+                "icd10_extended.search_candidates missing bind params: %s; query=%r",
+                sorted(missing_binds),
+                query,
+            )
+        # Debug: ensure all expected binds are present (lightweight, no exceptions)
+        expected_binds = {"query", "compact_query", "compact_code_query", "prefix_query", "compact_prefix_query", "desc_query", "similarity_threshold"}
+        missing_binds = expected_binds - set(params.keys())
+        if missing_binds:
+            logger.warning(
+                "icd10_extended.search_candidates missing bind params: %s; query=%r",
+                sorted(missing_binds),
+                query,
+            )
+        # Debug: ensure all expected binds are present (lightweight, no exceptions)
+        expected_binds = {"query", "compact_query", "compact_code_query", "prefix_query", "compact_prefix_query", "desc_query", "similarity_threshold"}
+        missing_binds = expected_binds - set(params.keys())
+        if missing_binds:
+            logger.warning(
+                "icd10_extended.search_candidates missing bind params: %s; query=%r",
+                sorted(missing_binds),
+                query,
+            )
+        # Debug: ensure all expected binds are present (lightweight, no exceptions)
+        expected_binds = {"query", "compact_query", "compact_code_query", "prefix_query", "compact_prefix_query", "desc_query", "similarity_threshold"}
+        missing_binds = expected_binds - set(params.keys())
+        if missing_binds:
+            logger.warning(
+                "icd10_extended.search_candidates missing bind params: %s; query=%r",
+                sorted(missing_binds),
+                query,
+            )
+        # Debug: ensure all expected binds are present (lightweight, no exceptions)
+        expected_binds = {"query", "compact_query", "compact_code_query", "prefix_query", "compact_prefix_query", "desc_query", "similarity_threshold"}
+        missing_binds = expected_binds - set(params.keys())
+        if missing_binds:
+            logger.warning(
+                "icd10_extended.search_candidates missing bind params: %s; query=%r",
+                sorted(missing_binds),
+                query,
+            )
+        # Debug: ensure all expected binds are present (lightweight, no exceptions)
+        expected_binds = {"query", "compact_query", "compact_code_query", "prefix_query", "compact_prefix_query", "desc_query", "similarity_threshold"}
+        missing_binds = expected_binds - set(params.keys())
+        if missing_binds:
+            logger.warning(
+                "icd10_extended.search_candidates missing bind params: %s; query=%r",
+                sorted(missing_binds),
+                query,
+            )
+        # Debug: ensure all expected binds are present (lightweight, no exceptions)
+        expected_binds = {"query", "compact_query", "compact_code_query", "prefix_query", "compact_prefix_query", "desc_query", "similarity_threshold"}
+        missing_binds = expected_binds - set(params.keys())
+        if missing_binds:
+            logger.warning(
+                "icd10_extended.search_candidates missing bind params: %s; query=%r",
+                sorted(missing_binds),
+                query,
+            )
+        # Debug: ensure all expected binds are present (lightweight, no exceptions)
+        expected_binds = {"query", "compact_query", "compact_code_query", "prefix_query", "compact_prefix_query", "desc_query", "similarity_threshold"}
+        missing_binds = expected_binds - set(params.keys())
+        if missing_binds:
+            logger.warning(
+                "icd10_extended.search_candidates missing bind params: %s; query=%r",
+                sorted(missing_binds),
+                query,
+            )
+        # Debug: ensure all expected binds are present (lightweight, no exceptions)
+        expected_binds = {"query", "compact_query", "compact_code_query", "prefix_query", "compact_prefix_query", "desc_query", "similarity_threshold"}
+        missing_binds = expected_binds - set(params.keys())
+        if missing_binds:
+            logger.warning(
+                "icd10_extended.search_candidates missing bind params: %s; query=%r",
+                sorted(missing_binds),
+                query,
+            )
+        # Debug: ensure all expected binds are present (lightweight, no exceptions)
+        expected_binds = {"query", "compact_query", "compact_code_query", "prefix_query", "compact_prefix_query", "desc_query", "similarity_threshold"}
+        missing_binds = expected_binds - set(params.keys())
+        if missing_binds:
+            logger.warning(
+                "icd10_extended.search_candidates missing bind params: %s; query=%r",
+                sorted(missing_binds),
+                query,
+            )
+        # Debug: ensure all expected binds are present (lightweight, no exceptions)
+        expected_binds = {"query", "compact_query", "compact_code_query", "prefix_query", "compact_prefix_query", "desc_query", "similarity_threshold"}
+        missing_binds = expected_binds - set(params.keys())
+        if missing_binds:
+            logger.warning(
+                "icd10_extended.search_candidates missing bind params: %s; query=%r",
+                sorted(missing_binds),
+                query,
+            )
         self._log_stmt_debug(stmt, params)
 
         try:
@@ -332,10 +638,7 @@ class ICD10ExtendedRepository:
             try:
                 fallback_result = await self._db.execute(
                     fallback_stmt,
-                    {
-                        "compact_code_query": compact_code_query,
-                        "compact_prefix_query": f"{compact_code_query}%",
-                    },
+                    params,
                 )
                 rows = fallback_result.all()
             except Exception:
@@ -358,7 +661,7 @@ class ICD10ExtendedRepository:
                 .select_from(t)
                 .where(or_(exact_code, prefix_code, desc_match))
             )
-            pre_similarity_count = (await self._db.execute(pre_similarity_stmt)).scalar() or 0
+            pre_similarity_count = (await self._db.execute(pre_similarity_stmt, params)).scalar() or 0
 
             top_similarity_stmt = (
                 select(
@@ -369,7 +672,7 @@ class ICD10ExtendedRepository:
                 .order_by(sim_score.desc(), t.c.code.asc())
                 .limit(3)
             )
-            top_similarity_rows = (await self._db.execute(top_similarity_stmt)).all()
+            top_similarity_rows = (await self._db.execute(top_similarity_stmt, params)).all()
             logger.warning(
                 "icd10_extended.search_candidates diagnostics query=%r pre_similarity_count=%s top_similarity=%s",
                 query,
