@@ -127,90 +127,88 @@ class ClinicalSearchEngine:
     ) -> List[ClinicalSearchResult]:
         """Execute the full search pipeline and return ranked results."""
         t0 = time.perf_counter()
-
         effective_limit = min(limit or self._tuning.default_limit, self._tuning.max_limit)
         candidate_limit = effective_limit * self._tuning.candidate_multiplier
-        logger.warning(
-            "clinical_search_engine.search raw_query=%r effective_limit=%s candidate_limit=%s "
-            "similarity_threshold=%.3f default_limit=%s",
-            raw_query,
-            effective_limit,
-            candidate_limit,
-            self._tuning.similarity_threshold,
-            self._tuning.default_limit,
-        )
 
-        # 1. Normalize
-        normalized = self._normalize_query(raw_query)
-        logger.warning(
-            "clinical_search_engine.search normalized_query=%r raw_stripped=%r",
-            normalized,
-            raw_query.strip() if raw_query is not None else None,
-        )
-        if not normalized:
-            logger.warning("clinical_search_engine.search normalized query is empty; returning []")
-            return []
-
-        # 2. Detect intent
-        intent = self._detect_intent(normalized) if self._flags.enable_intent_detection else None
-
-        # 3. Retrieve candidates from icd10_extended
-        repo = ICD10ExtendedRepository(self._db)
-        candidates = await repo.search_candidates(
-            normalized,
-            limit=candidate_limit,
-            tags_filter=tags_filter,
-        )
-        logger.warning(
-            "clinical_search_engine.search candidates_after_normalized=%s query=%r",
-            len(candidates),
-            normalized,
-        )
-
-        # Safety diagnostic path: retry once with raw query to detect over-normalization.
-        raw_direct = (raw_query or "").strip()
-        if not candidates and raw_direct and raw_direct != normalized:
+        try:
             logger.warning(
-                "clinical_search_engine.search no candidates after normalized query; "
-                "retrying repository with raw query=%r",
+                "clinical_search_engine.search raw_query=%r effective_limit=%s candidate_limit=%s "
+                "similarity_threshold=%.3f default_limit=%s",
+                raw_query,
+                effective_limit,
+                candidate_limit,
+                self._tuning.similarity_threshold,
+                self._tuning.default_limit,
+            )
+
+            raw_direct = (raw_query or "").strip()
+            is_code_query = self._is_code_query(raw_direct)
+
+            # 1. Normalize only for natural language queries
+            if is_code_query:
+                query_for_repo = self._normalize_code_query(raw_direct)
+                normalized = query_for_repo
+                intent = None
+            else:
+                normalized = self._normalize_query(raw_query)
+                if not normalized:
+                    logger.warning("clinical_search_engine.search normalized query is empty; returning []")
+                    return []
+                query_for_repo = normalized
+                intent = self._detect_intent(normalized) if self._flags.enable_intent_detection else None
+
+            use_similarity = (not is_code_query) and len(query_for_repo) >= 3
+            logger.warning(
+                "clinical_search_engine.search query_type=%s similarity_used=%s normalized_query=%r raw_stripped=%r",
+                "code" if is_code_query else "natural_language",
+                use_similarity,
+                query_for_repo,
                 raw_direct,
             )
+
+            # 2. Retrieve candidates from icd10_extended
+            repo = ICD10ExtendedRepository(self._db)
             candidates = await repo.search_candidates(
-                raw_direct,
+                query_for_repo,
                 limit=candidate_limit,
                 tags_filter=tags_filter,
+                query_is_code=is_code_query,
             )
             logger.warning(
-                "clinical_search_engine.search candidates_after_raw_retry=%s query=%r",
+                "clinical_search_engine.search candidates=%s query=%r query_type=%s",
                 len(candidates),
-                raw_direct,
+                query_for_repo,
+                "code" if is_code_query else "natural_language",
             )
 
-        source = "icd10_extended"
+            source = "icd10_extended"
 
-        # 4. Rank
-        ranked = self._rank(candidates, normalized, intent=intent)
+            # 3. Rank
+            ranked = self._rank(candidates, query_for_repo, intent=intent)
 
-        # 5. Trim
-        results = ranked[:effective_limit]
+            # 4. Trim
+            results = ranked[:effective_limit]
 
-        # 6. Structured logging (fire-and-forget style, no await)
-        duration_ms = (time.perf_counter() - t0) * 1000
-        self._emit_search_event(
-            SearchEvent(
-                query_raw=raw_query,
-                query_normalized=normalized,
-                intent=intent,
-                source=source,
-                candidate_count=len(candidates),
-                result_count=len(results),
-                duration_ms=round(duration_ms, 2),
-                top_code=results[0].code if results else None,
-                top_score=results[0].score if results else None,
+            # 5. Structured logging (fire-and-forget style, never raises)
+            duration_ms = (time.perf_counter() - t0) * 1000
+            self._emit_search_event(
+                SearchEvent(
+                    query_raw=raw_query,
+                    query_normalized=normalized,
+                    intent=intent,
+                    source=source,
+                    candidate_count=len(candidates),
+                    result_count=len(results),
+                    duration_ms=round(duration_ms, 2),
+                    top_code=results[0].code if results else None,
+                    top_score=results[0].score if results else None,
+                )
             )
-        )
 
-        return results
+            return results
+        except Exception:
+            logger.exception("clinical_search_engine.search failed; returning []")
+            return []
 
     # ------------------------------------------------------------------
     # Pipeline stages
@@ -238,6 +236,16 @@ class ClinicalSearchEngine:
                 best_intent = intent
 
         return best_intent if best_hits > 0 else None
+
+    @staticmethod
+    def _is_code_query(value: str) -> bool:
+        compact = (value or "").strip().replace(" ", "")
+        return bool(ICD_CODE_RE.match(compact)) or bool(re.match(r"^[A-Za-z]\d", compact))
+
+    @staticmethod
+    def _normalize_code_query(value: str) -> str:
+        # Code queries keep their token shape; only trim and uppercase.
+        return (value or "").strip().upper().replace(" ", "")
 
     def _rank(
         self,

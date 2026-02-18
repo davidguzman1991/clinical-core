@@ -14,6 +14,7 @@ No other repositories are modified by this module.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import List, Optional, Sequence
 
@@ -23,6 +24,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.search_config import search_tuning
 
 logger = logging.getLogger(__name__)
+
+ICD_CODE_QUERY_RE = re.compile(r"^[A-Za-z]\d[0-9A-Za-z.]*$")
 
 # ---------------------------------------------------------------------------
 # Data transfer objects
@@ -115,6 +118,7 @@ class ICD10ExtendedRepository:
         limit: int = search_tuning.default_limit,
         *,
         tags_filter: Optional[Sequence[str]] = None,
+        query_is_code: bool = False,
     ) -> List[ExtendedICD10Candidate]:
         """Search icd10_extended using trigram similarity + ILIKE + priority.
 
@@ -133,38 +137,45 @@ class ICD10ExtendedRepository:
         List of ``ExtendedICD10Candidate`` ordered by composite score desc.
         """
         logger.warning(
-            "icd10_extended.search_candidates raw_query=%r query_len=%s limit=%s tags_filter=%r",
+            "icd10_extended.search_candidates raw_query=%r query_len=%s limit=%s tags_filter=%r query_is_code=%s",
             query,
             len(query or ""),
             limit,
             tags_filter,
+            query_is_code,
         )
         if not query:
             logger.warning("icd10_extended.search_candidates query is empty; returning []")
             return []
 
+        compact_query = (query or "").strip().replace(" ", "")
+        query_is_code = query_is_code or bool(ICD_CODE_QUERY_RE.match(compact_query))
+
         t = self._table
         threshold = search_tuning.similarity_threshold
 
         code_col = func.coalesce(t.c.code, "")
+        code_compact = func.replace(func.replace(func.upper(code_col), ".", ""), " ", "")
         desc_norm = func.coalesce(t.c.description_normalized, "")
         search_txt = func.coalesce(t.c.search_text, "")
         priority_col = func.coalesce(t.c.priority, 0)
 
-        code_upper = func.upper(query)
+        code_upper = func.upper(compact_query)
+        compact_code_query = compact_query.replace(".", "").upper()
 
         # --- match expressions ---------------------------------------------------
-        exact_code = func.upper(code_col) == code_upper
-        prefix_code = code_col.ilike(f"{query}%")
+        exact_code = (code_compact == compact_code_query) if query_is_code else (func.upper(code_col) == code_upper)
+        prefix_code = code_compact.like(f"{compact_code_query}%") if query_is_code else code_col.ilike(f"{compact_query}%")
         desc_match = or_(
             desc_norm.ilike(f"%{query}%"),
             search_txt.ilike(f"%{query}%"),
         )
 
         # --- trigram similarity (requires pg_trgm) --------------------------------
-        use_similarity = len(query) >= 3
+        use_similarity = (len(query) >= 3) and (not query_is_code)
         logger.warning(
-            "icd10_extended.search_candidates similarity_threshold=%.3f use_similarity=%s",
+            "icd10_extended.search_candidates query_type=%s similarity_threshold=%.3f use_similarity=%s",
+            "code" if query_is_code else "natural_language",
             threshold,
             use_similarity,
         )
@@ -202,7 +213,7 @@ class ICD10ExtendedRepository:
                 prefix_code.label("prefix_match"),
                 desc_match.label("description_match"),
             )
-            .where(or_(exact_code, prefix_code, desc_match, sim_filter))
+            .where(or_(exact_code, prefix_code) if query_is_code else or_(exact_code, prefix_code, desc_match, sim_filter))
             .order_by(score.desc(), t.c.code.asc())
             .limit(limit)
         )
@@ -213,8 +224,37 @@ class ICD10ExtendedRepository:
             tag_conditions = [func.coalesce(t.c.tags, "").ilike(f"%{tag}%") for tag in tags_filter]
             stmt = stmt.where(or_(*tag_conditions))
 
-        result = await self._db.execute(stmt)
-        rows = result.all()
+        try:
+            result = await self._db.execute(stmt)
+            rows = result.all()
+        except Exception:
+            # Safe fallback: if similarity / expression compilation fails,
+            # return a strict exact/prefix code search instead of raising 500.
+            logger.exception(
+                "icd10_extended.search_candidates primary query failed; falling back to exact/prefix code search"
+            )
+            fallback_stmt = (
+                select(
+                    t.c.code,
+                    t.c.description,
+                    desc_norm.label("description_normalized"),
+                    literal(0.0).label("similarity"),
+                    priority_col.label("priority"),
+                    func.coalesce(t.c.tags, "").label("tags"),
+                    exact_code.label("exact_code_match"),
+                    prefix_code.label("prefix_match"),
+                    literal(False).label("description_match"),
+                )
+                .where(or_(exact_code, prefix_code))
+                .order_by(exact_code.desc(), prefix_code.desc(), priority_col.desc(), t.c.code.asc())
+                .limit(limit)
+            )
+            try:
+                fallback_result = await self._db.execute(fallback_stmt)
+                rows = fallback_result.all()
+            except Exception:
+                logger.exception("icd10_extended.search_candidates fallback query failed; returning []")
+                return []
         logger.warning(
             "icd10_extended.search_candidates rows=%s query=%r",
             len(rows),

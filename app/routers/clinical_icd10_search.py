@@ -169,13 +169,17 @@ async def search_icd10(
             logger.exception("Extended ICD10 search failed; falling back to legacy icd10 search")
 
     # Fallback: original icd10 table logic
-    legacy_results = await _run_icd10_search(q=normalized_q, limit=limit, db=db)
-    logger.warning(
-        "/clinical/icd10/search legacy_results=%s query=%r",
-        len(legacy_results),
-        normalized_q,
-    )
-    return legacy_results
+    try:
+        legacy_results = await _run_icd10_search(q=normalized_q, limit=limit, db=db)
+        logger.warning(
+            "/clinical/icd10/search legacy_results=%s query=%r",
+            len(legacy_results),
+            normalized_q,
+        )
+        return legacy_results
+    except Exception:
+        logger.exception("Legacy ICD10 search failed; returning []")
+        return []
 
 
 async def _run_extended_search(
