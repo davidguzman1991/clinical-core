@@ -40,7 +40,7 @@ class ExtendedICD10Candidate:
     description: str
     description_normalized: str
     similarity: float = 0.0
-    priority: int = 0
+    priority: float = 0.0
     tags: str = ""
     exact_code_match: bool = False
     prefix_match: bool = False
@@ -55,7 +55,7 @@ class ExtendedICD10Detail:
     description: str
     description_normalized: str
     search_text: str
-    priority: int = 0
+    priority: float = 0.0
     tags: str = ""
 
 
@@ -111,6 +111,19 @@ class ICD10ExtendedRepository:
     @staticmethod
     def _bool_as_float(expr):
         return case((expr, literal(1.0)), else_=literal(0.0))
+
+    @staticmethod
+    def _priority_as_float(col):
+        priority_text = func.lower(func.trim(func.coalesce(cast(col, Text), literal(""))))
+        numeric_pattern = r"^[0-9]+(\\.[0-9]+)?$"
+        return case(
+            (priority_text == literal(""), literal(0.0)),
+            (priority_text == literal("high"), literal(1.0)),
+            (priority_text == literal("medium"), literal(0.6)),
+            (priority_text == literal("low"), literal(0.2)),
+            (priority_text.op("~")(numeric_pattern), cast(priority_text, Float)),
+            else_=literal(0.0),
+        )
 
     def _log_stmt_debug(self, stmt, params: dict) -> None:
         try:
@@ -175,7 +188,7 @@ class ICD10ExtendedRepository:
         code_compact = func.replace(func.replace(func.upper(code_col), ".", ""), " ", "")
         desc_norm = func.coalesce(t.c.description_normalized, "")
         search_txt = func.coalesce(t.c.search_text, "")
-        priority_col = func.coalesce(cast(t.c.priority, Float), literal(0.0))
+        priority_col = self._priority_as_float(t.c.priority)
 
         compact_code_query = compact_query.replace(".", "").upper()
 
@@ -214,7 +227,7 @@ class ICD10ExtendedRepository:
         code_score = (
             literal(3.0) * self._bool_as_float(exact_code)
             + literal(2.0) * self._bool_as_float(prefix_code)
-            + literal(0.1) * func.cast(priority_col, Float)
+            + literal(0.1) * priority_col
         ).label("_rank_score")
 
         text_score = (
@@ -222,7 +235,7 @@ class ICD10ExtendedRepository:
             + literal(2.0) * self._bool_as_float(prefix_code)
             + literal(1.5) * self._bool_as_float(desc_match)
             + sim_score
-            + literal(0.1) * func.cast(priority_col, Float)
+            + literal(0.1) * priority_col
         ).label("_rank_score")
 
         base_select = (
@@ -373,7 +386,7 @@ class ICD10ExtendedRepository:
                 description=r.description,
                 description_normalized=r.description_normalized or "",
                 similarity=float(r.similarity or 0.0),
-                priority=int(r.priority or 0),
+                priority=float(r.priority or 0.0),
                 tags=r.tags or "",
                 exact_code_match=bool(r.exact_code_match),
                 prefix_match=bool(r.prefix_match),
@@ -397,7 +410,7 @@ class ICD10ExtendedRepository:
             t.c.description,
             func.coalesce(t.c.description_normalized, "").label("description_normalized"),
             func.coalesce(t.c.search_text, "").label("search_text"),
-            func.coalesce(t.c.priority, 0).label("priority"),
+            self._priority_as_float(t.c.priority).label("priority"),
             func.coalesce(t.c.tags, "").label("tags"),
         ).where(func.upper(t.c.code) == func.upper(code))
 
@@ -411,7 +424,7 @@ class ICD10ExtendedRepository:
             description=row.description,
             description_normalized=row.description_normalized,
             search_text=row.search_text,
-            priority=int(row.priority or 0),
+            priority=float(row.priority or 0.0),
             tags=row.tags or "",
         )
 
@@ -447,14 +460,14 @@ class ICD10ExtendedRepository:
                 t.c.description,
                 func.coalesce(t.c.description_normalized, "").label("description_normalized"),
                 func.coalesce(t.c.search_text, "").label("search_text"),
-                func.coalesce(t.c.priority, 0).label("priority"),
+                self._priority_as_float(t.c.priority).label("priority"),
                 func.coalesce(t.c.tags, "").label("tags"),
             )
             .where(
                 code_compact.like(f"{root}%"),
                 func.length(code_compact) > len(root),
             )
-            .order_by(func.coalesce(t.c.priority, 0).desc(), t.c.code.asc())
+            .order_by(self._priority_as_float(t.c.priority).desc(), t.c.code.asc())
             .limit(limit)
         )
 
@@ -467,7 +480,7 @@ class ICD10ExtendedRepository:
                 description=r.description,
                 description_normalized=r.description_normalized,
                 search_text=r.search_text,
-                priority=int(r.priority or 0),
+                priority=float(r.priority or 0.0),
                 tags=r.tags or "",
             )
             for r in rows
