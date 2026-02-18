@@ -18,7 +18,7 @@ import re
 from dataclasses import dataclass, field
 from typing import List, Optional, Sequence
 
-from sqlalchemy import Column, Float, Integer, MetaData, String, Table, Text, cast, func, literal, or_, select, text
+from sqlalchemy import Column, Float, Integer, MetaData, String, Table, Text, bindparam, case, cast, func, literal, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.search_config import search_tuning
@@ -108,6 +108,18 @@ class ICD10ExtendedRepository:
         engine = self._db.get_bind()
         return _get_icd10_extended_table(id(engine), self._metadata)
 
+    @staticmethod
+    def _bool_as_float(expr):
+        return case((expr, literal(1.0)), else_=literal(0.0))
+
+    def _log_stmt_debug(self, stmt, params: dict) -> None:
+        try:
+            bind = self._db.get_bind()
+            compiled = stmt.compile(dialect=bind.dialect, compile_kwargs={"literal_binds": False})
+            logger.warning("icd10_extended.search_candidates sql=%s params=%s", str(compiled), params)
+        except Exception:
+            logger.exception("icd10_extended.search_candidates failed to compile debug SQL")
+
     # ------------------------------------------------------------------
     # search_candidates
     # ------------------------------------------------------------------
@@ -165,15 +177,22 @@ class ICD10ExtendedRepository:
         search_txt = func.coalesce(t.c.search_text, "")
         priority_col = func.coalesce(cast(t.c.priority, Float), literal(0.0))
 
-        code_upper = func.upper(compact_query)
         compact_code_query = compact_query.replace(".", "").upper()
 
         # --- match expressions ---------------------------------------------------
-        exact_code = (code_compact == compact_code_query) if query_is_code else (func.upper(code_col) == code_upper)
-        prefix_code = code_compact.like(f"{compact_code_query}%") if query_is_code else code_col.ilike(f"{compact_query}%")
+        exact_code = (
+            code_compact == bindparam("compact_code_query")
+            if query_is_code
+            else (func.upper(code_col) == func.upper(bindparam("compact_query")))
+        )
+        prefix_code = (
+            code_compact.like(bindparam("compact_prefix_query"))
+            if query_is_code
+            else code_col.ilike(bindparam("prefix_query"))
+        )
         desc_match = or_(
-            desc_norm.ilike(f"%{query}%"),
-            search_txt.ilike(f"%{query}%"),
+            desc_norm.ilike(bindparam("desc_query")),
+            search_txt.ilike(bindparam("desc_query")),
         )
 
         # --- trigram similarity (requires pg_trgm) --------------------------------
@@ -186,33 +205,27 @@ class ICD10ExtendedRepository:
         )
         if use_similarity:
             sim_score = func.greatest(
-                func.similarity(desc_norm, query),
-                func.similarity(search_txt, query),
+                func.similarity(desc_norm, bindparam("query")),
+                func.similarity(search_txt, bindparam("query")),
             )
         else:
             sim_score = literal(0.0)
 
-        # --- composite ordering score ---------------------------------------------
-        # priority_boost:  higher priority rows surface first
-        # sim_score:       trigram similarity for fuzzy matches
-        # exact / prefix:  strong boosts for code-level matches
-        score = (
-            (
-                literal(3.0) * func.cast(exact_code, Float)
-                + literal(2.0) * func.cast(prefix_code, Float)
-                + literal(0.1) * func.cast(priority_col, Float)
-            )
-            if query_is_code
-            else (
-                literal(3.0) * func.cast(exact_code, Float)
-                + literal(2.0) * func.cast(prefix_code, Float)
-                + literal(1.5) * func.cast(desc_match, Float)
-                + sim_score
-                + literal(0.1) * func.cast(priority_col, Float)
-            )
+        code_score = (
+            literal(3.0) * self._bool_as_float(exact_code)
+            + literal(2.0) * self._bool_as_float(prefix_code)
+            + literal(0.1) * func.cast(priority_col, Float)
         ).label("_rank_score")
 
-        stmt = (
+        text_score = (
+            literal(3.0) * self._bool_as_float(exact_code)
+            + literal(2.0) * self._bool_as_float(prefix_code)
+            + literal(1.5) * self._bool_as_float(desc_match)
+            + sim_score
+            + literal(0.1) * func.cast(priority_col, Float)
+        ).label("_rank_score")
+
+        base_select = (
             select(
                 t.c.code,
                 t.c.description,
@@ -224,10 +237,26 @@ class ICD10ExtendedRepository:
                 prefix_code.label("prefix_match"),
                 desc_match.label("description_match"),
             )
-            .where(or_(exact_code, prefix_code) if query_is_code else or_(exact_code, prefix_code, desc_match))
-            .order_by(score.desc(), t.c.code.asc())
-            .limit(limit)
         )
+
+        if query_is_code:
+            stmt = (
+                base_select.where(or_(exact_code, prefix_code))
+                .order_by(code_score.desc(), t.c.code.asc())
+                .limit(limit)
+            )
+        elif use_similarity:
+            stmt = (
+                base_select.where(or_(exact_code, prefix_code, desc_match))
+                .order_by(text_score.desc(), t.c.code.asc())
+                .limit(limit)
+            )
+        else:
+            stmt = (
+                base_select.where(or_(exact_code, prefix_code, desc_match))
+                .order_by(text_score.desc(), t.c.code.asc())
+                .limit(limit)
+            )
 
         # Optional tag containment filter (bonus, not exclusion)
         # Tags are stored as comma-separated text; we use ILIKE for portability.
@@ -235,8 +264,19 @@ class ICD10ExtendedRepository:
             tag_conditions = [func.coalesce(t.c.tags, "").ilike(f"%{tag}%") for tag in tags_filter]
             stmt = stmt.where(or_(*tag_conditions))
 
+        params = {
+            "query": query,
+            "compact_query": compact_query,
+            "compact_code_query": compact_code_query,
+            "prefix_query": f"{compact_query}%",
+            "compact_prefix_query": f"{compact_code_query}%",
+            "desc_query": f"%{query}%",
+            "similarity_threshold": threshold,
+        }
+        self._log_stmt_debug(stmt, params)
+
         try:
-            result = await self._db.execute(stmt)
+            result = await self._db.execute(stmt, params)
             rows = result.all()
         except Exception:
             try:
@@ -249,6 +289,8 @@ class ICD10ExtendedRepository:
                 "ICD10 extended search failed, switching to fallback"
             )
             fallback_stmt = (
+                # Fallback query is always code-safe and similarity-free.
+                # Use explicit code expressions to avoid mixed bindparam sets.
                 select(
                     t.c.code,
                     t.c.description,
@@ -256,16 +298,32 @@ class ICD10ExtendedRepository:
                     literal(0.0).label("similarity"),
                     priority_col.label("priority"),
                     func.coalesce(t.c.tags, "").label("tags"),
-                    exact_code.label("exact_code_match"),
-                    prefix_code.label("prefix_match"),
+                    (code_compact == bindparam("compact_code_query")).label("exact_code_match"),
+                    code_compact.like(bindparam("compact_prefix_query")).label("prefix_match"),
                     literal(False).label("description_match"),
                 )
-                .where(or_(exact_code, prefix_code))
-                .order_by(exact_code.desc(), prefix_code.desc(), priority_col.desc(), t.c.code.asc())
+                .where(
+                    or_(
+                        code_compact == bindparam("compact_code_query"),
+                        code_compact.like(bindparam("compact_prefix_query")),
+                    )
+                )
+                .order_by(
+                    (code_compact == bindparam("compact_code_query")).desc(),
+                    code_compact.like(bindparam("compact_prefix_query")).desc(),
+                    priority_col.desc(),
+                    t.c.code.asc(),
+                )
                 .limit(limit)
             )
             try:
-                fallback_result = await self._db.execute(fallback_stmt)
+                fallback_result = await self._db.execute(
+                    fallback_stmt,
+                    {
+                        "compact_code_query": compact_code_query,
+                        "compact_prefix_query": f"{compact_code_query}%",
+                    },
+                )
                 rows = fallback_result.all()
             except Exception:
                 try:
