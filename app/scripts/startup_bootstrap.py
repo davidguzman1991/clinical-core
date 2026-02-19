@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 
 from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session
@@ -11,6 +12,14 @@ from app.scripts.seed_clinical_dictionary import seed_clinical_dictionary
 from app.services.icd10_state import check_icd10_loaded
 
 logger = logging.getLogger(__name__)
+DEFAULT_EXTENDED_SEARCH_TEXT_MIN_COVERAGE = 0.85
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
 
 
 def _configure_logging() -> None:
@@ -68,6 +77,107 @@ def _rebuild_clinical_dictionary(db: Session) -> None:
     )
 
 
+def _icd10_extended_stats(db: Session) -> dict[str, float] | None:
+    bind = db.get_bind()
+    inspector = inspect(bind)
+    if not inspector.has_table("icd10_extended"):
+        return None
+
+    row = db.execute(
+        text(
+            """
+            SELECT
+                COUNT(*)::float AS total,
+                SUM(CASE WHEN COALESCE(BTRIM(search_text), '') = '' THEN 1 ELSE 0 END)::float AS empty_search_text,
+                SUM(CASE WHEN COALESCE(BTRIM(description_normalized), '') = '' THEN 1 ELSE 0 END)::float AS empty_description_normalized
+            FROM icd10_extended
+            """
+        )
+    ).mappings().first()
+
+    total = float((row or {}).get("total") or 0.0)
+    empty_search_text = float((row or {}).get("empty_search_text") or 0.0)
+    empty_description_normalized = float((row or {}).get("empty_description_normalized") or 0.0)
+
+    coverage_search_text = (0.0 if total <= 0 else ((total - empty_search_text) / total) * 100.0)
+    coverage_description_normalized = (
+        0.0 if total <= 0 else ((total - empty_description_normalized) / total) * 100.0
+    )
+
+    return {
+        "total": total,
+        "empty_search_text": empty_search_text,
+        "empty_description_normalized": empty_description_normalized,
+        "coverage_search_text": coverage_search_text,
+        "coverage_description_normalized": coverage_description_normalized,
+    }
+
+
+def _ensure_icd10_extended_enriched() -> None:
+    min_coverage = _env_float("ICD10_EXTENDED_MIN_SEARCH_TEXT_COVERAGE", DEFAULT_EXTENDED_SEARCH_TEXT_MIN_COVERAGE)
+
+    db: Session = SessionLocal()
+    try:
+        before = _icd10_extended_stats(db)
+        if before is None:
+            logger.warning("icd10_extended table not found. Skipping search_text enrichment.")
+            return
+
+        logger.info(
+            "icd10_extended enrichment precheck total=%s empty_search_text=%s empty_description_normalized=%s "
+            "coverage_search_text=%.2f%% coverage_description_normalized=%.2f%%",
+            int(before["total"]),
+            int(before["empty_search_text"]),
+            int(before["empty_description_normalized"]),
+            before["coverage_search_text"],
+            before["coverage_description_normalized"],
+        )
+
+        if before["total"] <= 0:
+            logger.info("icd10_extended has no rows. Skipping search_text enrichment.")
+            return
+
+        current_coverage_ratio = before["coverage_search_text"] / 100.0
+        should_enrich = (before["empty_search_text"] > 0) or (current_coverage_ratio < min_coverage)
+        if not should_enrich:
+            logger.info(
+                "icd10_extended search_text coverage is sufficient (%.2f%% >= %.2f%%). Skipping enrichment.",
+                before["coverage_search_text"],
+                min_coverage * 100.0,
+            )
+            return
+
+        # Late import avoids any startup cost/path issues if enrichment is not needed.
+        from scripts.enrich_icd10_extended_search_text import enrich_search_text
+
+        logger.info(
+            "icd10_extended search_text enrichment triggered reason=low_or_empty_search_text "
+            "coverage_search_text=%.2f%% threshold=%.2f%%",
+            before["coverage_search_text"],
+            min_coverage * 100.0,
+        )
+        enrich_search_text(csv_path="app/data/clinical_dictionary_clean.csv", batch_size=500, dry_run=False)
+
+        after = _icd10_extended_stats(db)
+        if after is None:
+            logger.warning("icd10_extended table unavailable after enrichment attempt.")
+            return
+
+        logger.info(
+            "icd10_extended enrichment postcheck total=%s empty_search_text=%s empty_description_normalized=%s "
+            "coverage_search_text=%.2f%% coverage_description_normalized=%.2f%%",
+            int(after["total"]),
+            int(after["empty_search_text"]),
+            int(after["empty_description_normalized"]),
+            after["coverage_search_text"],
+            after["coverage_description_normalized"],
+        )
+    except Exception:
+        logger.exception("Failed to ensure icd10_extended search_text enrichment")
+    finally:
+        db.close()
+
+
 def bootstrap() -> None:
     _configure_logging()
 
@@ -92,6 +202,10 @@ def bootstrap() -> None:
         logger.exception("Startup bootstrap failed while ensuring clinical_dictionary schema")
     finally:
         db.close()
+
+    # Ensure search semantics are materialized in icd10_extended before serving.
+    if schema_ready:
+        _ensure_icd10_extended_enriched()
 
     # Seed terms after schema is ready and ICD10 is loaded.
     if schema_ready:

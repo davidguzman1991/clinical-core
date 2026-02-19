@@ -193,28 +193,47 @@ class ClinicalSearchEngine:
 
             # 2. Retrieve candidates from icd10_extended
             repo = ICD10ExtendedRepository(self._db)
-            candidates = await repo.search_candidates(
-                query_for_repo,
-                limit=candidate_limit,
-                tags_filter=tags_filter,
-                query_is_code=is_code_query,
-            )
-            fallback_triggered = False
-            if not candidates:
-                fallback_triggered = True
+            candidates: list[ExtendedICD10Candidate] = []
+            variant_used = query_for_repo
+            retry_plan_triggered = False
+
+            search_attempts: list[tuple[str, Optional[int], str]] = [(query_for_repo, None, "base")]
+            if not is_code_query:
+                variants = self._expand_query_variants(query_for_repo)
+                for variant in variants:
+                    if variant != query_for_repo:
+                        search_attempts.append((variant, None, "expanded"))
+            if (not is_code_query) and len(query_for_repo.split()) >= 2:
+                search_attempts.append((query_for_repo, 1, "relaxed_min_hits"))
+
+            for attempt_query, attempt_min_hits, attempt_kind in search_attempts:
                 candidates = await repo.search_candidates(
-                    query_for_repo,
+                    attempt_query,
                     limit=candidate_limit,
                     tags_filter=tags_filter,
                     query_is_code=is_code_query,
-                    force_no_similarity=True,
+                    min_hits=attempt_min_hits,
                 )
+                if os.getenv("SEARCH_DEBUG") == "1":
+                    logger.warning(
+                        "clinical_search_engine.search attempt kind=%s query=%r min_hits=%s rows=%s",
+                        attempt_kind,
+                        attempt_query,
+                        attempt_min_hits,
+                        len(candidates),
+                    )
+                if candidates:
+                    variant_used = attempt_query
+                    retry_plan_triggered = attempt_kind != "base"
+                    break
+
             logger.warning(
-                "clinical_search_engine.search candidates=%s query=%r query_type=%s fallback_triggered=%s",
+                "clinical_search_engine.search candidates=%s query=%r query_type=%s retry_plan_triggered=%s variant_used=%r",
                 len(candidates),
                 query_for_repo,
                 "code" if is_code_query else "natural_language",
-                fallback_triggered,
+                retry_plan_triggered,
+                variant_used,
             )
 
             source = "icd10_extended"
@@ -241,21 +260,17 @@ class ClinicalSearchEngine:
                 )
             )
             logger.warning(
-                "clinical_search_engine.search result_count=%s similarity_used=%s fallback_triggered=%s",
+                "clinical_search_engine.search result_count=%s similarity_used=%s retry_plan_triggered=%s",
                 len(results),
                 use_similarity,
-                fallback_triggered,
+                retry_plan_triggered,
             )
             logger.warning(
-                "clinical_search_engine.search extended_results=%s query=%r",
+                "clinical_search_engine.search extended_results=%s query=%r variant_used=%r",
                 len(results),
                 query_for_repo,
+                variant_used,
             )
-            if not results:
-                logger.warning(
-                    "clinical_search_engine.search extended_results=0 -> fallback_to_legacy=1 query=%r",
-                    query_for_repo,
-                )
 
             return results
         except Exception:
@@ -327,6 +342,34 @@ class ClinicalSearchEngine:
     def _normalize_code_query(value: str) -> str:
         # Code queries keep their token shape; only trim and uppercase.
         return (value or "").strip().upper().replace(" ", "")
+
+    @staticmethod
+    def _expand_query_variants(normalized_query: str) -> list[str]:
+        """Create clinically useful variants for natural-language retries.
+
+        Input is expected to be normalized (lowercase, accent-stripped).
+        """
+        base_tokens = [t for t in _TOKEN_RE.findall((normalized_query or "").strip().lower()) if t]
+        filtered_tokens = [t for t in base_tokens if t not in STOPWORDS_ES]
+        collapsed = " ".join(filtered_tokens or base_tokens)
+
+        variants: list[str] = []
+        seen: set[str] = set()
+
+        def add_variant(value: str) -> None:
+            candidate = " ".join(value.split()).strip()
+            if candidate and candidate not in seen:
+                seen.add(candidate)
+                variants.append(candidate)
+
+        has_dolor = any(t == "dolor" for t in filtered_tokens)
+        has_head_prefix = any(t.startswith("cabe") for t in filtered_tokens)
+        if has_dolor and has_head_prefix:
+            add_variant("cefalea")
+            add_variant("migraña")
+
+        add_variant(collapsed)
+        return variants
 
     def _rank(
         self,

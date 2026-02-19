@@ -163,6 +163,7 @@ class ICD10ExtendedRepository:
         tags_filter: Optional[Sequence[str]] = None,
         query_is_code: bool = False,
         force_no_similarity: bool = False,
+        min_hits: Optional[int] = None,
     ) -> List[ExtendedICD10Candidate]:
         """Search icd10_extended using trigram similarity + ILIKE + priority.
 
@@ -274,16 +275,24 @@ class ICD10ExtendedRepository:
                 literal(0.0),
             ).label("token_hit_count")
             if token_count >= 2:
-                min_hits = 2
+                default_min_hits = 2
             elif token_count == 1:
-                min_hits = 1
+                default_min_hits = 1
             else:
-                min_hits = 0
-            token_gate_match = and_(literal(min_hits > 0), token_hit_count >= literal(min_hits))
+                default_min_hits = 0
+            if token_count >= 2 and min_hits is not None:
+                effective_min_hits = max(1, min(int(min_hits), token_count))
+            else:
+                effective_min_hits = default_min_hits
+            token_gate_match = and_(
+                literal(effective_min_hits > 0),
+                token_hit_count >= literal(effective_min_hits),
+            )
             token_any_match = or_(*token_match_exprs)
         else:
             token_hit_count = literal(0.0).label("token_hit_count")
-            min_hits = 0
+            default_min_hits = 0
+            effective_min_hits = 0
             token_gate_match = literal(False)
             token_any_match = literal(False)
 
@@ -292,7 +301,7 @@ class ICD10ExtendedRepository:
                 "icd10_extended.search_candidates token_debug query=%r tokens=%s min_hits=%s query_is_code=%s similarity_used=%s",
                 query,
                 tokens,
-                min_hits,
+                effective_min_hits,
                 query_is_code,
                 use_similarity,
             )
@@ -334,7 +343,7 @@ class ICD10ExtendedRepository:
             )
         else:
             if token_count >= 2:
-                token_hits_ok = token_hit_count >= literal(min_hits)
+                token_hits_ok = token_hit_count >= literal(effective_min_hits)
                 sim_gate = and_(sim_match, token_hits_ok)
                 search_filter = or_(desc_match, token_hits_ok, sim_gate)
             elif token_count == 1:
@@ -442,8 +451,10 @@ class ICD10ExtendedRepository:
                 for r in rows[:3]
             ]
             logger.warning(
-                "icd10_extended.search_candidates top3_debug query=%r top3=%s",
+                "icd10_extended.search_candidates top3_debug query=%r token_count=%s min_hits=%s top3=%s",
                 query,
+                token_count,
+                effective_min_hits,
                 debug_top,
             )
 
