@@ -196,7 +196,18 @@ class ICD10ExtendedRepository:
 
         compact_query = (query or "").strip().replace(" ", "")
         query_is_code = query_is_code or bool(ICD_CODE_QUERY_RE.match(compact_query))
-        tokens = [] if query_is_code else [t for t in query.split() if len(t) >= 3][:5]
+        if query_is_code:
+            tokens = []
+        else:
+            raw_tokens = [t for t in (query or "").split() if t]
+            incomplete_last_token = (
+                bool(query)
+                and (not query.endswith(" "))
+                and bool(raw_tokens)
+                and (len(raw_tokens[-1]) < 4)
+            )
+            scoring_tokens = raw_tokens[:-1] if incomplete_last_token else raw_tokens
+            tokens = [t for t in scoring_tokens if len(t) >= 4][:5]
 
         t = self._table
         try:
@@ -258,11 +269,16 @@ class ICD10ExtendedRepository:
 
         if token_match_exprs:
             token_hit_count = sum(
-                (self._bool_as_float(token_expr) for token_expr in token_match_exprs),
+                (case((token_expr, literal(1.0)), else_=literal(0.0)) for token_expr in token_match_exprs),
                 literal(0.0),
             ).label("token_hit_count")
-            min_hits = 2 if len(tokens) >= 2 else 1
-            token_gate_match = token_hit_count >= literal(min_hits)
+            if len(tokens) >= 2:
+                min_hits = 2
+            elif len(tokens) == 1:
+                min_hits = 1
+            else:
+                min_hits = 0
+            token_gate_match = and_(literal(min_hits > 0), token_hit_count >= literal(min_hits))
             token_any_match = or_(*token_match_exprs)
         else:
             token_hit_count = literal(0.0).label("token_hit_count")
@@ -315,26 +331,15 @@ class ICD10ExtendedRepository:
                 .order_by(code_score.desc(), t.c.code.asc())
                 .limit(limit)
             )
-        elif use_similarity:
-            if token_match_exprs:
-                if len(tokens) >= 2:
-                    sim_gate = and_(sim_match, token_any_match)
-                else:
-                    sim_gate = sim_match
-                search_filter = or_(desc_match, token_gate_match, sim_gate)
-            else:
-                # Fallback to prior behavior when tokenization yields no usable tokens.
-                search_filter = or_(exact_code, prefix_code, desc_match, sim_match)
-            stmt = (
-                base_select.where(search_filter)
-                .order_by(text_score.desc(), t.c.code.asc())
-                .limit(limit)
-            )
         else:
-            if token_match_exprs:
-                search_filter = or_(desc_match, token_gate_match)
-            else:
-                search_filter = or_(exact_code, prefix_code, desc_match)
+            sim_gate = and_(
+                sim_match,
+                or_(
+                    literal(min_hits == 0),
+                    and_(token_any_match, token_hit_count >= literal(1.0)),
+                ),
+            )
+            search_filter = or_(token_gate_match, desc_match, sim_gate)
             stmt = (
                 base_select.where(search_filter)
                 .order_by(text_score.desc(), t.c.code.asc())
