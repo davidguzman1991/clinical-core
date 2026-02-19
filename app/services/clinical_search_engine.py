@@ -15,6 +15,7 @@ It does **not** modify search logs, suggestions, dictionary, or learning modules
 from __future__ import annotations
 
 import logging
+import os
 import re
 import time
 import unicodedata
@@ -42,6 +43,30 @@ logger = logging.getLogger(__name__)
 
 _TOKEN_RE = re.compile(r"[a-z0-9.]+")
 ICD_CODE_RE = re.compile(r"^[A-Za-z]\d{2,4}(\.\d{0,2})?$")
+STOPWORDS_ES = {
+    "de",
+    "la",
+    "del",
+    "el",
+    "los",
+    "las",
+    "y",
+    "en",
+    "con",
+    "por",
+    "para",
+    "al",
+    "un",
+    "una",
+    "unos",
+    "unas",
+    "a",
+    "o",
+    "u",
+    "que",
+    "se",
+    "su",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -252,12 +277,32 @@ class ClinicalSearchEngine:
 
     @staticmethod
     def _normalize_query(value: str) -> str:
-        """Accent-strip, lowercase, collapse whitespace."""
+        """Accent-strip, lowercase, tokenize, and remove common ES stopwords.
+
+        Examples (manual):
+        - "neumonía de la" -> "neumonia"
+        - "dolor de cabeza" -> "dolor cabeza"
+        - "insuficiencia cardiaca" -> "insuficiencia cardiaca"
+        """
         text = value.strip().lower()
         nfkd = unicodedata.normalize("NFKD", text)
         stripped = "".join(ch for ch in nfkd if not unicodedata.combining(ch))
         tokens = _TOKEN_RE.findall(stripped)
-        return " ".join(tokens)
+        normalized_before_stopwords = " ".join(tokens)
+        filtered_tokens = [token for token in tokens if token not in STOPWORDS_ES]
+
+        # Safety fallback: if filtering removes everything, keep original tokens.
+        normalized_after_stopwords = " ".join(filtered_tokens or tokens)
+
+        if os.getenv("SEARCH_DEBUG") == "1":
+            logger.info(
+                "clinical_search_engine.normalize raw_query=%r normalized_before_stopwords=%r normalized_after_stopwords=%r",
+                value,
+                normalized_before_stopwords,
+                normalized_after_stopwords,
+            )
+
+        return normalized_after_stopwords
 
     def _detect_intent(self, normalized_query: str) -> Optional[str]:
         """Return the first matching clinical intent or ``None``."""
