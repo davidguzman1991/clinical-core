@@ -15,10 +15,26 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import List, Optional, Sequence
 
-from sqlalchemy import Column, Float, Integer, MetaData, String, Table, Text, bindparam, case, cast, func, literal, or_, select, text
+from sqlalchemy import (
+    Column,
+    Float,
+    Integer,
+    MetaData,
+    String,
+    Table,
+    Text,
+    bindparam,
+    case,
+    cast,
+    func,
+    literal,
+    or_,
+    select,
+    text,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.search_config import search_tuning
@@ -115,7 +131,7 @@ class ICD10ExtendedRepository:
     @staticmethod
     def _priority_as_float(col):
         priority_text = func.lower(func.trim(func.coalesce(cast(col, Text), literal(""))))
-        numeric_pattern = r"^[0-9]+(\\.[0-9]+)?$"
+        numeric_pattern = r"^[0-9]+(\.[0-9]+)?$"
         return case(
             (priority_text == literal(""), literal(0.0)),
             (priority_text == literal("high"), literal(1.0)),
@@ -155,8 +171,9 @@ class ICD10ExtendedRepository:
         limit:
             Maximum number of candidates to return.
         tags_filter:
-            Optional list of tags; only rows whose ``tags`` column contains
-            **any** of the given tags will receive a tag-match bonus.
+            Optional list of tags. NOTE: current behavior is EXCLUSIONARY:
+            if provided, results must match at least one tag.
+            (If you want "bonus but not exclusion", we can refactor ranking later.)
 
         Returns
         -------
@@ -193,8 +210,11 @@ class ICD10ExtendedRepository:
         compact_code_query = compact_query.replace(".", "").upper()
 
         # --- match expressions ---------------------------------------------------
+        # Bind-safe: in natural language, do NOT require code binds.
         exact_code = code_compact == bindparam("compact_code_query") if query_is_code else literal(False)
         prefix_code = code_compact.like(bindparam("compact_prefix_query")) if query_is_code else literal(False)
+
+        # Substring match (fast + predictable)
         desc_match = or_(
             desc_norm.ilike(bindparam("desc_query")),
             search_txt.ilike(bindparam("desc_query")),
@@ -208,13 +228,18 @@ class ICD10ExtendedRepository:
             use_similarity,
             threshold,
         )
+
         if use_similarity:
             sim_score = func.greatest(
                 func.similarity(desc_norm, bindparam("query")),
                 func.similarity(search_txt, bindparam("query")),
             )
+            # ✅ KEY FIX:
+            # Allow candidates into WHERE via similarity threshold even if no substring match.
+            sim_match = sim_score >= bindparam("similarity_threshold")
         else:
             sim_score = literal(0.0)
+            sim_match = literal(False)
 
         code_score = (
             literal(3.0) * self._bool_as_float(exact_code)
@@ -230,18 +255,16 @@ class ICD10ExtendedRepository:
             + literal(0.1) * priority_col
         ).label("_rank_score")
 
-        base_select = (
-            select(
-                t.c.code,
-                t.c.description,
-                desc_norm.label("description_normalized"),
-                sim_score.label("similarity"),
-                priority_col.label("priority"),
-                func.coalesce(t.c.tags, "").label("tags"),
-                exact_code.label("exact_code_match"),
-                prefix_code.label("prefix_match"),
-                desc_match.label("description_match"),
-            )
+        base_select = select(
+            t.c.code,
+            t.c.description,
+            desc_norm.label("description_normalized"),
+            sim_score.label("similarity"),
+            priority_col.label("priority"),
+            func.coalesce(t.c.tags, "").label("tags"),
+            exact_code.label("exact_code_match"),
+            prefix_code.label("prefix_match"),
+            desc_match.label("description_match"),
         )
 
         if query_is_code:
@@ -251,8 +274,9 @@ class ICD10ExtendedRepository:
                 .limit(limit)
             )
         elif use_similarity:
+            # ✅ include sim_match so multi-word phrases don't drop to 0 rows
             stmt = (
-                base_select.where(or_(exact_code, prefix_code, desc_match))
+                base_select.where(or_(exact_code, prefix_code, desc_match, sim_match))
                 .order_by(text_score.desc(), t.c.code.asc())
                 .limit(limit)
             )
@@ -263,8 +287,7 @@ class ICD10ExtendedRepository:
                 .limit(limit)
             )
 
-        # Optional tag containment filter (bonus, not exclusion)
-        # Tags are stored as comma-separated text; we use ILIKE for portability.
+        # Optional tag filter (CURRENT behavior: exclusion)
         if tags_filter:
             tag_conditions = [func.coalesce(t.c.tags, "").ilike(f"%{tag}%") for tag in tags_filter]
             stmt = stmt.where(or_(*tag_conditions))
@@ -278,11 +301,13 @@ class ICD10ExtendedRepository:
             "desc_query": f"%{query}%",
             "similarity_threshold": threshold,
         }
+
         expected_binds = {"desc_query"}
         if query_is_code:
             expected_binds.update({"compact_code_query", "compact_prefix_query"})
         if use_similarity:
-            expected_binds.add("query")
+            expected_binds.update({"query", "similarity_threshold"})
+
         missing_binds = expected_binds - set(params.keys())
         if missing_binds:
             logger.warning(
@@ -290,6 +315,7 @@ class ICD10ExtendedRepository:
                 sorted(missing_binds),
                 query,
             )
+
         self._log_stmt_debug(stmt, params)
 
         try:
@@ -300,14 +326,10 @@ class ICD10ExtendedRepository:
                 await self._db.rollback()
             except Exception:
                 logger.exception("icd10_extended.search_candidates rollback failed")
-            # Safe fallback: if similarity / expression compilation fails,
-            # return a strict exact/prefix code search instead of raising 500.
-            logger.exception(
-                "ICD10 extended search failed, switching to fallback"
-            )
+
+            logger.exception("ICD10 extended search failed, switching to fallback")
+
             fallback_stmt = (
-                # Fallback query is always code-safe and similarity-free.
-                # Use explicit code expressions to avoid mixed bindparam sets.
                 select(
                     t.c.code,
                     t.c.description,
@@ -334,10 +356,7 @@ class ICD10ExtendedRepository:
                 .limit(limit)
             )
             try:
-                fallback_result = await self._db.execute(
-                    fallback_stmt,
-                    params,
-                )
+                fallback_result = await self._db.execute(fallback_stmt, params)
                 rows = fallback_result.all()
             except Exception:
                 try:
@@ -346,27 +365,20 @@ class ICD10ExtendedRepository:
                     logger.exception("icd10_extended.search_candidates fallback rollback failed")
                 logger.exception("icd10_extended.search_candidates fallback query failed; returning []")
                 return []
-        logger.warning(
-            "icd10_extended.search_candidates rows=%s query=%r",
-            len(rows),
-            query,
-        )
+
+        logger.warning("icd10_extended.search_candidates rows=%s query=%r", len(rows), query)
 
         if not rows:
-            # Diagnostics to determine if threshold/similarity is too restrictive.
-            pre_similarity_stmt = (
-                select(func.count())
-                .select_from(t)
-                .where(or_(exact_code, prefix_code, desc_match))
+            # Diagnostics: count rows that match pre-filters (substring/code/sim)
+            pre_filters = or_(exact_code, prefix_code, desc_match, sim_match) if use_similarity else or_(
+                exact_code, prefix_code, desc_match
             )
+
+            pre_similarity_stmt = select(func.count()).select_from(t).where(pre_filters)
             pre_similarity_count = (await self._db.execute(pre_similarity_stmt, params)).scalar() or 0
 
             top_similarity_stmt = (
-                select(
-                    t.c.code,
-                    t.c.description,
-                    sim_score.label("sim"),
-                )
+                select(t.c.code, t.c.description, sim_score.label("sim"))
                 .order_by(sim_score.desc(), t.c.code.asc())
                 .limit(3)
             )
@@ -375,10 +387,7 @@ class ICD10ExtendedRepository:
                 "icd10_extended.search_candidates diagnostics query=%r pre_similarity_count=%s top_similarity=%s",
                 query,
                 pre_similarity_count,
-                [
-                    (r.code, round(float(r.sim or 0.0), 4))
-                    for r in top_similarity_rows
-                ],
+                [(r.code, round(float(r.sim or 0.0), 4)) for r in top_similarity_rows],
             )
 
         return [
@@ -441,9 +450,6 @@ class ICD10ExtendedRepository:
     ) -> List[ExtendedICD10Detail]:
         """Given a root/parent ICD-10 code (e.g. ``J18``), return billable
         (more specific) children that share the same prefix.
-
-        This is useful when a clinician selects a category-level code and the
-        system needs to suggest valid billable alternatives.
         """
         if not code:
             return []
@@ -453,7 +459,6 @@ class ICD10ExtendedRepository:
             return []
 
         t = self._table
-        # Match codes that start with the root prefix and are longer (more specific)
         code_compact = func.replace(func.upper(t.c.code), ".", "")
         stmt = (
             select(
