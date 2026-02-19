@@ -14,11 +14,13 @@ No other repositories are modified by this module.
 from __future__ import annotations
 
 import logging
+import os
 import re
 from dataclasses import dataclass
 from typing import List, Optional, Sequence
 
 from sqlalchemy import (
+    and_,
     Column,
     Float,
     Integer,
@@ -194,6 +196,7 @@ class ICD10ExtendedRepository:
 
         compact_query = (query or "").strip().replace(" ", "")
         query_is_code = query_is_code or bool(ICD_CODE_QUERY_RE.match(compact_query))
+        tokens = [] if query_is_code else [t for t in query.split() if len(t) >= 3][:5]
 
         t = self._table
         try:
@@ -241,6 +244,42 @@ class ICD10ExtendedRepository:
             sim_score = literal(0.0)
             sim_match = literal(False)
 
+        token_match_exprs = []
+        token_param_names: list[str] = []
+        for i, token in enumerate(tokens):
+            token_param = f"token_query_{i}"
+            token_param_names.append(token_param)
+            token_match_exprs.append(
+                or_(
+                    desc_norm.ilike(bindparam(token_param)),
+                    search_txt.ilike(bindparam(token_param)),
+                )
+            )
+
+        if token_match_exprs:
+            token_hit_count = sum(
+                (self._bool_as_float(token_expr) for token_expr in token_match_exprs),
+                literal(0.0),
+            ).label("token_hit_count")
+            min_hits = 2 if len(tokens) >= 2 else 1
+            token_gate_match = token_hit_count >= literal(min_hits)
+            token_any_match = or_(*token_match_exprs)
+        else:
+            token_hit_count = literal(0.0).label("token_hit_count")
+            min_hits = 0
+            token_gate_match = literal(False)
+            token_any_match = literal(False)
+
+        if os.getenv("SEARCH_DEBUG") == "1":
+            logger.warning(
+                "icd10_extended.search_candidates token_debug query=%r tokens=%s min_hits=%s query_is_code=%s similarity_used=%s",
+                query,
+                tokens,
+                min_hits,
+                query_is_code,
+                use_similarity,
+            )
+
         code_score = (
             literal(3.0) * self._bool_as_float(exact_code)
             + literal(2.0) * self._bool_as_float(prefix_code)
@@ -251,6 +290,7 @@ class ICD10ExtendedRepository:
             literal(3.0) * self._bool_as_float(exact_code)
             + literal(2.0) * self._bool_as_float(prefix_code)
             + literal(1.5) * self._bool_as_float(desc_match)
+            + literal(0.8) * token_hit_count
             + sim_score
             + literal(0.1) * priority_col
         ).label("_rank_score")
@@ -265,24 +305,38 @@ class ICD10ExtendedRepository:
             exact_code.label("exact_code_match"),
             prefix_code.label("prefix_match"),
             desc_match.label("description_match"),
+            token_hit_count,
         )
 
         if query_is_code:
+            search_filter = or_(exact_code, prefix_code)
             stmt = (
-                base_select.where(or_(exact_code, prefix_code))
+                base_select.where(search_filter)
                 .order_by(code_score.desc(), t.c.code.asc())
                 .limit(limit)
             )
         elif use_similarity:
-            # ✅ include sim_match so multi-word phrases don't drop to 0 rows
+            if token_match_exprs:
+                if len(tokens) >= 2:
+                    sim_gate = and_(sim_match, token_any_match)
+                else:
+                    sim_gate = sim_match
+                search_filter = or_(desc_match, token_gate_match, sim_gate)
+            else:
+                # Fallback to prior behavior when tokenization yields no usable tokens.
+                search_filter = or_(exact_code, prefix_code, desc_match, sim_match)
             stmt = (
-                base_select.where(or_(exact_code, prefix_code, desc_match, sim_match))
+                base_select.where(search_filter)
                 .order_by(text_score.desc(), t.c.code.asc())
                 .limit(limit)
             )
         else:
+            if token_match_exprs:
+                search_filter = or_(desc_match, token_gate_match)
+            else:
+                search_filter = or_(exact_code, prefix_code, desc_match)
             stmt = (
-                base_select.where(or_(exact_code, prefix_code, desc_match))
+                base_select.where(search_filter)
                 .order_by(text_score.desc(), t.c.code.asc())
                 .limit(limit)
             )
@@ -301,12 +355,15 @@ class ICD10ExtendedRepository:
             "desc_query": f"%{query}%",
             "similarity_threshold": threshold,
         }
+        for i, token in enumerate(tokens):
+            params[f"token_query_{i}"] = f"%{token}%"
 
         expected_binds = {"desc_query"}
         if query_is_code:
             expected_binds.update({"compact_code_query", "compact_prefix_query"})
         if use_similarity:
             expected_binds.update({"query", "similarity_threshold"})
+        expected_binds.update(token_param_names)
 
         missing_binds = expected_binds - set(params.keys())
         if missing_binds:
@@ -340,6 +397,7 @@ class ICD10ExtendedRepository:
                     (code_compact == bindparam("compact_code_query")).label("exact_code_match"),
                     code_compact.like(bindparam("compact_prefix_query")).label("prefix_match"),
                     literal(False).label("description_match"),
+                    literal(0.0).label("token_hit_count"),
                 )
                 .where(
                     or_(
@@ -367,12 +425,24 @@ class ICD10ExtendedRepository:
                 return []
 
         logger.warning("icd10_extended.search_candidates rows=%s query=%r", len(rows), query)
+        if os.getenv("SEARCH_DEBUG") == "1":
+            debug_top = [
+                (
+                    r.code,
+                    round(float(r.similarity or 0.0), 4),
+                    int(float(getattr(r, "token_hit_count", 0.0) or 0.0)),
+                )
+                for r in rows[:3]
+            ]
+            logger.warning(
+                "icd10_extended.search_candidates top3_debug query=%r top3=%s",
+                query,
+                debug_top,
+            )
 
         if not rows:
             # Diagnostics: count rows that match pre-filters (substring/code/sim)
-            pre_filters = or_(exact_code, prefix_code, desc_match, sim_match) if use_similarity else or_(
-                exact_code, prefix_code, desc_match
-            )
+            pre_filters = search_filter
 
             pre_similarity_stmt = select(func.count()).select_from(t).where(pre_filters)
             pre_similarity_count = (await self._db.execute(pre_similarity_stmt, params)).scalar() or 0
