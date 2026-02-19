@@ -208,6 +208,7 @@ class ICD10ExtendedRepository:
             )
             scoring_tokens = raw_tokens[:-1] if incomplete_last_token else raw_tokens
             tokens = [t for t in scoring_tokens if len(t) >= 4][:5]
+        token_count = len(tokens)
 
         t = self._table
         try:
@@ -272,9 +273,9 @@ class ICD10ExtendedRepository:
                 (case((token_expr, literal(1.0)), else_=literal(0.0)) for token_expr in token_match_exprs),
                 literal(0.0),
             ).label("token_hit_count")
-            if len(tokens) >= 2:
+            if token_count >= 2:
                 min_hits = 2
-            elif len(tokens) == 1:
+            elif token_count == 1:
                 min_hits = 1
             else:
                 min_hits = 0
@@ -332,14 +333,15 @@ class ICD10ExtendedRepository:
                 .limit(limit)
             )
         else:
-            sim_gate = and_(
-                sim_match,
-                or_(
-                    literal(min_hits == 0),
-                    and_(token_any_match, token_hit_count >= literal(1.0)),
-                ),
-            )
-            search_filter = or_(token_gate_match, desc_match, sim_gate)
+            if token_count >= 2:
+                token_hits_ok = token_hit_count >= literal(min_hits)
+                sim_gate = and_(sim_match, token_hits_ok)
+                search_filter = or_(desc_match, token_hits_ok, sim_gate)
+            elif token_count == 1:
+                search_filter = or_(desc_match, sim_match)
+            else:
+                # Keep current behavior for empty tokenization.
+                search_filter = or_(desc_match, sim_match)
             stmt = (
                 base_select.where(search_filter)
                 .order_by(text_score.desc(), t.c.code.asc())
@@ -430,7 +432,7 @@ class ICD10ExtendedRepository:
                 return []
 
         logger.warning("icd10_extended.search_candidates rows=%s query=%r", len(rows), query)
-        if os.getenv("SEARCH_DEBUG") == "1":
+        if os.getenv("SEARCH_DEBUG") == "1" and token_count >= 2:
             debug_top = [
                 (
                     r.code,
