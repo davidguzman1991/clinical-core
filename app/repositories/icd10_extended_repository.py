@@ -165,7 +165,7 @@ class ICD10ExtendedRepository:
         force_no_similarity: bool = False,
         min_hits: Optional[int] = None,
     ) -> List[ExtendedICD10Candidate]:
-        """Search icd10_extended using trigram similarity + ILIKE + priority.
+        """Search icd10_extended using hybrid trigram similarity + clinical boosts.
 
         Parameters
         ----------
@@ -182,6 +182,7 @@ class ICD10ExtendedRepository:
         -------
         List of ``ExtendedICD10Candidate`` ordered by composite score desc.
         """
+        # Hybrid clinical ranking engine v1
         logger.warning(
             "icd10_extended.search_candidates raw_query=%r query_len=%s limit=%s tags_filter=%r query_is_code=%s force_no_similarity=%s",
             query,
@@ -197,287 +198,72 @@ class ICD10ExtendedRepository:
 
         compact_query = (query or "").strip().replace(" ", "")
         query_is_code = query_is_code or bool(ICD_CODE_QUERY_RE.match(compact_query))
-        if query_is_code:
-            tokens = []
-        else:
-            raw_tokens = [t for t in (query or "").split() if t]
-            incomplete_last_token = (
-                bool(query)
-                and (not query.endswith(" "))
-                and bool(raw_tokens)
-                and (len(raw_tokens[-1]) < 4)
-            )
-            scoring_tokens = raw_tokens[:-1] if incomplete_last_token else raw_tokens
-            tokens = [t for t in scoring_tokens if len(t) >= 4][:5]
-        token_count = len(tokens)
-
+        
         t = self._table
-        try:
-            threshold = float(search_tuning.similarity_threshold or 0.2)
-        except (TypeError, ValueError):
-            threshold = 0.2
-
-        code_col = func.coalesce(t.c.code, "")
-        code_compact = func.replace(func.replace(func.upper(code_col), ".", ""), " ", "")
-        desc_norm = func.coalesce(t.c.description_normalized, "")
-        search_txt = func.coalesce(t.c.search_text, "")
-        priority_col = self._priority_as_float(t.c.priority)
-
-        compact_code_query = compact_query.replace(".", "").upper()
-
-        # --- match expressions ---------------------------------------------------
-        # Bind-safe: in natural language, do NOT require code binds.
-        exact_code = code_compact == bindparam("compact_code_query") if query_is_code else literal(False)
-        prefix_code = code_compact.like(bindparam("compact_prefix_query")) if query_is_code else literal(False)
-
-        # Substring match (fast + predictable)
-        desc_match = or_(
-            desc_norm.ilike(bindparam("desc_query")),
-            search_txt.ilike(bindparam("desc_query")),
+        
+        # Hybrid clinical ranking engine v1.1 – exact word boost added
+        similarity_score = func.similarity(func.coalesce(t.c.search_text, ""), bindparam("query"))
+ 
+        description_boost = case(
+            (t.c.description.ilike(bindparam("query") + "%"), literal(0.3)),
+            else_=literal(0.0),
         )
-
-        # --- trigram similarity (requires pg_trgm) --------------------------------
-        use_similarity = (len(query) >= 3) and (not query_is_code) and (not force_no_similarity)
-        logger.warning(
-            "icd10_extended.search_candidates query_type=%s similarity_used=%s similarity_threshold=%.3f",
-            "code" if query_is_code else "natural_language",
-            use_similarity,
-            threshold,
+ 
+        parent_code_boost = case(
+            (t.c.code.op("~")(literal("^[A-Z][0-9]{2}$")), literal(0.2)),
+            else_=literal(0.0),
         )
-
-        if use_similarity:
-            sim_score = func.greatest(
-                func.similarity(desc_norm, bindparam("query")),
-                func.similarity(search_txt, bindparam("query")),
-            )
-            # ✅ KEY FIX:
-            # Allow candidates into WHERE via similarity threshold even if no substring match.
-            sim_match = sim_score >= bindparam("similarity_threshold")
-        else:
-            sim_score = literal(0.0)
-            sim_match = literal(False)
-
-        token_match_exprs = []
-        token_param_names: list[str] = []
-        for i, token in enumerate(tokens):
-            token_param = f"token_query_{i}"
-            token_param_names.append(token_param)
-            token_match_exprs.append(
-                or_(
-                    desc_norm.ilike(bindparam(token_param)),
-                    search_txt.ilike(bindparam(token_param)),
-                )
-            )
-
-        if token_match_exprs:
-            token_hit_count = sum(
-                (case((token_expr, literal(1.0)), else_=literal(0.0)) for token_expr in token_match_exprs),
-                literal(0.0),
-            ).label("token_hit_count")
-            if token_count >= 2:
-                default_min_hits = 2
-            elif token_count == 1:
-                default_min_hits = 1
-            else:
-                default_min_hits = 0
-            if token_count >= 2 and min_hits is not None:
-                effective_min_hits = max(1, min(int(min_hits), token_count))
-            else:
-                effective_min_hits = default_min_hits
-            token_gate_match = and_(
-                literal(effective_min_hits > 0),
-                token_hit_count >= literal(effective_min_hits),
-            )
-            token_any_match = or_(*token_match_exprs)
-        else:
-            token_hit_count = literal(0.0).label("token_hit_count")
-            default_min_hits = 0
-            effective_min_hits = 0
-            token_gate_match = literal(False)
-            token_any_match = literal(False)
-
-        if os.getenv("SEARCH_DEBUG") == "1":
-            logger.warning(
-                "icd10_extended.search_candidates token_debug query=%r tokens=%s min_hits=%s query_is_code=%s similarity_used=%s",
-                query,
-                tokens,
-                effective_min_hits,
-                query_is_code,
-                use_similarity,
-            )
-
-        code_score = (
-            literal(3.0) * self._bool_as_float(exact_code)
-            + literal(2.0) * self._bool_as_float(prefix_code)
-            + literal(0.1) * priority_col
-        ).label("_rank_score")
-
-        text_score = (
-            literal(3.0) * self._bool_as_float(exact_code)
-            + literal(2.0) * self._bool_as_float(prefix_code)
-            + literal(1.5) * self._bool_as_float(desc_match)
-            + literal(0.8) * token_hit_count
-            + sim_score
-            + literal(0.1) * priority_col
-        ).label("_rank_score")
-
-        base_select = select(
+ 
+        exact_word_boost = case(
+            (
+                func.coalesce(t.c.search_text, "").op("~*")(
+                    func.concat(literal(r"\m"), bindparam("query"), literal(r"\M"))
+                ),
+                literal(0.25),
+            ),
+            else_=literal(0.0),
+        )
+ 
+        hybrid_score = (
+            similarity_score * literal(0.4)
+            + description_boost
+            + parent_code_boost
+            + exact_word_boost
+        ).label("score")
+        
+        # Base query with hybrid scoring
+        stmt = select(
             t.c.code,
             t.c.description,
-            desc_norm.label("description_normalized"),
-            sim_score.label("similarity"),
-            priority_col.label("priority"),
+            func.coalesce(t.c.description_normalized, "").label("description_normalized"),
+            hybrid_score.label("similarity"),  # Keep as similarity for response compatibility
+            self._priority_as_float(t.c.priority).label("priority"),
             func.coalesce(t.c.tags, "").label("tags"),
-            exact_code.label("exact_code_match"),
-            prefix_code.label("prefix_match"),
-            desc_match.label("description_match"),
-            token_hit_count,
-        )
-
-        if query_is_code:
-            search_filter = or_(exact_code, prefix_code)
-            stmt = (
-                base_select.where(search_filter)
-                .order_by(code_score.desc(), t.c.code.asc())
-                .limit(limit)
-            )
-        else:
-            if token_count >= 2:
-                token_hits_ok = token_hit_count >= literal(effective_min_hits)
-                sim_gate = and_(sim_match, token_hits_ok)
-                search_filter = or_(desc_match, token_hits_ok, sim_gate)
-            elif token_count == 1:
-                search_filter = or_(desc_match, sim_match)
-            else:
-                # Keep current behavior for empty tokenization.
-                search_filter = or_(desc_match, sim_match)
-            stmt = (
-                base_select.where(search_filter)
-                .order_by(text_score.desc(), t.c.code.asc())
-                .limit(limit)
-            )
-
+            literal(False).label("exact_code_match"),
+            literal(False).label("prefix_match"),
+            literal(False).label("description_match"),
+        ).where(t.c.search_text.ilike("%" + bindparam("query") + "%")).order_by(text("similarity DESC")).limit(limit)
+        
         # Optional tag filter (CURRENT behavior: exclusion)
         if tags_filter:
             tag_conditions = [func.coalesce(t.c.tags, "").ilike(f"%{tag}%") for tag in tags_filter]
             stmt = stmt.where(or_(*tag_conditions))
-
+        
         params = {
             "query": query,
-            "compact_query": compact_query,
-            "compact_code_query": compact_code_query,
-            "prefix_query": f"{compact_query}%",
-            "compact_prefix_query": f"{compact_code_query}%",
-            "desc_query": f"%{query}%",
-            "similarity_threshold": threshold,
         }
-        for i, token in enumerate(tokens):
-            params[f"token_query_{i}"] = f"%{token}%"
-
-        expected_binds = {"desc_query"}
-        if query_is_code:
-            expected_binds.update({"compact_code_query", "compact_prefix_query"})
-        if use_similarity:
-            expected_binds.update({"query", "similarity_threshold"})
-        expected_binds.update(token_param_names)
-
-        missing_binds = expected_binds - set(params.keys())
-        if missing_binds:
-            logger.warning(
-                "icd10_extended.search_candidates missing bind params: %s; query=%r",
-                sorted(missing_binds),
-                query,
-            )
-
+        
         self._log_stmt_debug(stmt, params)
-
+        
         try:
             result = await self._db.execute(stmt, params)
             rows = result.all()
-        except Exception:
-            try:
-                await self._db.rollback()
-            except Exception:
-                logger.exception("icd10_extended.search_candidates rollback failed")
-
-            logger.exception("ICD10 extended search failed, switching to fallback")
-
-            fallback_stmt = (
-                select(
-                    t.c.code,
-                    t.c.description,
-                    desc_norm.label("description_normalized"),
-                    literal(0.0).label("similarity"),
-                    priority_col.label("priority"),
-                    func.coalesce(t.c.tags, "").label("tags"),
-                    (code_compact == bindparam("compact_code_query")).label("exact_code_match"),
-                    code_compact.like(bindparam("compact_prefix_query")).label("prefix_match"),
-                    literal(False).label("description_match"),
-                    literal(0.0).label("token_hit_count"),
-                )
-                .where(
-                    or_(
-                        code_compact == bindparam("compact_code_query"),
-                        code_compact.like(bindparam("compact_prefix_query")),
-                    )
-                )
-                .order_by(
-                    (code_compact == bindparam("compact_code_query")).desc(),
-                    code_compact.like(bindparam("compact_prefix_query")).desc(),
-                    priority_col.desc(),
-                    t.c.code.asc(),
-                )
-                .limit(limit)
-            )
-            try:
-                fallback_result = await self._db.execute(fallback_stmt, params)
-                rows = fallback_result.all()
-            except Exception:
-                try:
-                    await self._db.rollback()
-                except Exception:
-                    logger.exception("icd10_extended.search_candidates fallback rollback failed")
-                logger.exception("icd10_extended.search_candidates fallback query failed; returning []")
-                return []
-
+        except Exception as e:
+            logger.exception("ICD10 extended search failed: %s", e)
+            return []
+        
         logger.warning("icd10_extended.search_candidates rows=%s query=%r", len(rows), query)
-        if os.getenv("SEARCH_DEBUG") == "1" and token_count >= 2:
-            debug_top = [
-                (
-                    r.code,
-                    round(float(r.similarity or 0.0), 4),
-                    int(float(getattr(r, "token_hit_count", 0.0) or 0.0)),
-                )
-                for r in rows[:3]
-            ]
-            logger.warning(
-                "icd10_extended.search_candidates top3_debug query=%r token_count=%s min_hits=%s top3=%s",
-                query,
-                token_count,
-                effective_min_hits,
-                debug_top,
-            )
-
-        if not rows:
-            # Diagnostics: count rows that match pre-filters (substring/code/sim)
-            pre_filters = search_filter
-
-            pre_similarity_stmt = select(func.count()).select_from(t).where(pre_filters)
-            pre_similarity_count = (await self._db.execute(pre_similarity_stmt, params)).scalar() or 0
-
-            top_similarity_stmt = (
-                select(t.c.code, t.c.description, sim_score.label("sim"))
-                .order_by(sim_score.desc(), t.c.code.asc())
-                .limit(3)
-            )
-            top_similarity_rows = (await self._db.execute(top_similarity_stmt, params)).all()
-            logger.warning(
-                "icd10_extended.search_candidates diagnostics query=%r pre_similarity_count=%s top_similarity=%s",
-                query,
-                pre_similarity_count,
-                [(r.code, round(float(r.sim or 0.0), 4)) for r in top_similarity_rows],
-            )
-
+        
         return [
             ExtendedICD10Candidate(
                 code=r.code,
