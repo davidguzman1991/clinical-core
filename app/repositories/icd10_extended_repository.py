@@ -224,37 +224,60 @@ class ICD10ExtendedRepository:
             else_=literal(0.0),
         )
  
-        # Hybrid clinical ranking engine v2.1 – lowered similarity threshold to 0.08 for better recall
+        # Hybrid clinical ranking engine v2.2 – dual automatic mode (code + similarity)
         hybrid_score = (
             similarity_score * literal(0.4)
             + description_boost
             + parent_code_boost
             + exact_word_boost
         ).label("score")
- 
-        # Base query with hybrid scoring
-        stmt = (
-            select(
-                t.c.code,
-                t.c.description,
-                func.coalesce(t.c.description_normalized, "").label("description_normalized"),
-                hybrid_score.label("similarity"),  # Keep as similarity for response compatibility
-                self._priority_as_float(t.c.priority).label("priority"),
-                func.coalesce(t.c.tags, "").label("tags"),
-                literal(False).label("exact_code_match"),
-                literal(False).label("prefix_match"),
-                literal(False).label("description_match"),
-            )
-            .where(
-                func.similarity(
-                    func.coalesce(t.c.search_text, ""),
-                    bindparam("query"),
+
+        if query_is_code:
+            stmt = (
+                select(
+                    t.c.code,
+                    t.c.description,
+                    t.c.description_normalized,
+                    literal(1.0).label("similarity"),
+                    t.c.priority,
+                    t.c.tags,
+                    literal(False).label("exact_code_match"),
+                    literal(False).label("prefix_match"),
+                    literal(False).label("description_match"),
                 )
-                > literal(0.08)
+                .where(
+                    or_(
+                        t.c.code.ilike(bindparam("query") + "%"),
+                        func.replace(t.c.code, ".", "").ilike(bindparam("query") + "%"),
+                    )
+                )
+                .order_by(t.c.code.asc())
+                .limit(limit)
             )
-            .order_by(text("similarity DESC"))
-            .limit(limit)
-        )
+        else:
+            # Base query with hybrid scoring
+            stmt = (
+                select(
+                    t.c.code,
+                    t.c.description,
+                    func.coalesce(t.c.description_normalized, "").label("description_normalized"),
+                    hybrid_score.label("similarity"),  # Keep as similarity for response compatibility
+                    self._priority_as_float(t.c.priority).label("priority"),
+                    func.coalesce(t.c.tags, "").label("tags"),
+                    literal(False).label("exact_code_match"),
+                    literal(False).label("prefix_match"),
+                    literal(False).label("description_match"),
+                )
+                .where(
+                    func.similarity(
+                        func.coalesce(t.c.search_text, ""),
+                        bindparam("query"),
+                    )
+                    > literal(0.08)
+                )
+                .order_by(text("similarity DESC"))
+                .limit(limit)
+            )
         
         # Optional tag filter (CURRENT behavior: exclusion)
         if tags_filter:
