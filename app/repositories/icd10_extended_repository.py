@@ -239,7 +239,7 @@ class ICD10ExtendedRepository:
                     t.c.description,
                     t.c.description_normalized,
                     literal(1.0).label("similarity"),
-                    t.c.priority,
+                    self._priority_as_float(t.c.priority).label("priority"),
                     t.c.tags,
                     literal(False).label("exact_code_match"),
                     literal(False).label("prefix_match"),
