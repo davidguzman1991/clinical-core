@@ -255,13 +255,40 @@ class ICD10ExtendedRepository:
                 .limit(limit)
             )
         else:
+            # Hybrid clinical ranking engine v2.3 – multi-token clinical intent scoring
+            normalized_query = (query or "").strip()
+            tokens = [tok for tok in normalized_query.split() if tok]
+
+            if len(tokens) >= 2:
+                primary_token = tokens[0]
+                token_similarity_sum = sum(
+                    (
+                        func.similarity(func.coalesce(t.c.search_text, ""), literal(tok))
+                        for tok in tokens
+                    ),
+                    literal(0.0),
+                )
+                prefix_boost = case(
+                    (t.c.description.ilike(literal(primary_token) + "%"), literal(0.5)),
+                    (t.c.description.ilike("%" + literal(primary_token) + "%"), literal(0.3)),
+                    else_=literal(0.0),
+                )
+                branch_similarity = (
+                    (similarity_score * literal(0.4))
+                    + (token_similarity_sum * literal(0.4))
+                    + prefix_boost
+                    + parent_code_boost
+                )
+            else:
+                branch_similarity = hybrid_score
+
             # Base query with hybrid scoring
             stmt = (
                 select(
                     t.c.code,
                     t.c.description,
                     func.coalesce(t.c.description_normalized, "").label("description_normalized"),
-                    hybrid_score.label("similarity"),  # Keep as similarity for response compatibility
+                    branch_similarity.label("similarity"),  # Keep as similarity for response compatibility
                     self._priority_as_float(t.c.priority).label("priority"),
                     func.coalesce(t.c.tags, "").label("tags"),
                     literal(False).label("exact_code_match"),
