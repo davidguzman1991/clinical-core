@@ -224,22 +224,13 @@ class ICD10ExtendedRepository:
             else_=literal(0.0),
         )
  
+        # Hybrid clinical ranking engine v2.1 – lowered similarity threshold to 0.08 for better recall
         hybrid_score = (
             similarity_score * literal(0.4)
             + description_boost
             + parent_code_boost
             + exact_word_boost
         ).label("score")
- 
-        # Hybrid clinical ranking engine v1.2 – tokenized AND search support
-        raw_tokens = [t for t in (query or "").split() if t]
-        tokens = raw_tokens[:8]
-        token_param_names: list[str] = []
-        token_conditions = []
-        for i, tok in enumerate(tokens):
-            token_param = f"token_{i}"
-            token_param_names.append(token_param)
-            token_conditions.append(t.c.search_text.ilike(bindparam(token_param)))
  
         # Base query with hybrid scoring
         stmt = (
@@ -254,7 +245,13 @@ class ICD10ExtendedRepository:
                 literal(False).label("prefix_match"),
                 literal(False).label("description_match"),
             )
-            .where(and_(*token_conditions) if token_conditions else t.c.search_text.ilike("%" + bindparam("query") + "%"))
+            .where(
+                func.similarity(
+                    func.coalesce(t.c.search_text, ""),
+                    bindparam("query"),
+                )
+                > literal(0.08)
+            )
             .order_by(text("similarity DESC"))
             .limit(limit)
         )
@@ -267,8 +264,6 @@ class ICD10ExtendedRepository:
         params = {
             "query": query,
         }
-        for i, tok in enumerate(tokens):
-            params[f"token_{i}"] = f"%{tok}%"
         
         self._log_stmt_debug(stmt, params)
         
