@@ -262,16 +262,22 @@ class ICD10ExtendedRepository:
             # Hybrid clinical ranking engine v2.3 – multi-token clinical intent scoring
             normalized_query = (query or "").strip()
             tokens = [tok for tok in normalized_query.split() if tok]
+            # Always use hybrid ranking for natural language queries
+            # Single-token queries were previously degraded by simple branch
+            token_similarity_sum = sum(
+                (
+                    func.similarity(func.coalesce(t.c.search_text, ""), literal(tok))
+                    for tok in tokens
+                ),
+                literal(0.0),
+            )
 
-            if len(tokens) >= 2:
+            prefix_boost = literal(0.0)
+            all_tokens_boost = literal(0.0)
+            token_match_ratio_boost = literal(0.0)
+
+            if tokens:
                 primary_token = tokens[0]
-                token_similarity_sum = sum(
-                    (
-                        func.similarity(func.coalesce(t.c.search_text, ""), literal(tok))
-                        for tok in tokens
-                    ),
-                    literal(0.0),
-                )
                 prefix_boost = case(
                     (t.c.description.ilike(literal(primary_token) + "%"), literal(0.5)),
                     (t.c.description.ilike("%" + literal(primary_token) + "%"), literal(0.3)),
@@ -290,33 +296,29 @@ class ICD10ExtendedRepository:
                     else_=literal(0.0),
                 )
                 # Refinement clínico: boost proporcional por cobertura de tokens en search_text.
-                token_match_ratio_boost = literal(0.0)
+                matched_tokens_score = literal(0.0)
 
-                if tokens:
-                    matched_tokens_score = literal(0.0)
+                for tok in tokens:
+                    matched_tokens_score = matched_tokens_score + case(
+                        (
+                            func.coalesce(t.c.search_text, "").ilike(literal(f"%{tok}%")),
+                            literal(1.0),
+                        ),
+                        else_=literal(0.0),
+                    )
 
-                    for tok in tokens:
-                        matched_tokens_score = matched_tokens_score + case(
-                            (
-                                func.coalesce(t.c.search_text, "").ilike(literal(f"%{tok}%")),
-                                literal(1.0),
-                            ),
-                            else_=literal(0.0),
-                        )
+                token_ratio = matched_tokens_score / literal(float(len(tokens)))
+                token_match_ratio_boost = token_ratio * literal(1.0)
 
-                    token_ratio = matched_tokens_score / literal(float(len(tokens)))
-                    token_match_ratio_boost = token_ratio * literal(1.0)
-                branch_similarity = (
-                    (similarity_score * literal(0.30))
-                    + (token_similarity_sum * literal(0.45))
-                    + prefix_boost
-                    + parent_code_boost
-                    + all_tokens_boost
-                    + token_match_ratio_boost
-                    + anatomical_boost
-                )
-            else:
-                branch_similarity = hybrid_score + anatomical_boost
+            branch_similarity = (
+                (similarity_score * literal(0.30))
+                + (token_similarity_sum * literal(0.45))
+                + prefix_boost
+                + parent_code_boost
+                + all_tokens_boost
+                + token_match_ratio_boost
+                + anatomical_boost
+            )
 
             # Base query with hybrid scoring
             stmt = (
