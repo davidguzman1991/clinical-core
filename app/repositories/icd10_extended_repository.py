@@ -210,7 +210,10 @@ class ICD10ExtendedRepository:
             ),
             else_=literal(0.0),
         )
-        anatomical_term_param = bindparam("anatomical_term")
+        anatomical_term_param = bindparam(
+            "anatomical_term",
+            type_=String(),
+        )
         anatomical_boost = case(
             (
                 and_(
