@@ -272,12 +272,30 @@ class ICD10ExtendedRepository:
                     ),
                     else_=literal(0.0),
                 )
+                # Refinement clínico: boost proporcional por cobertura de tokens en search_text.
+                token_match_ratio_boost = literal(0.0)
+
+                if tokens:
+                    matched_tokens_score = literal(0.0)
+
+                    for tok in tokens:
+                        matched_tokens_score = matched_tokens_score + case(
+                            (
+                                func.coalesce(t.c.search_text, "").ilike(literal(f"%{tok}%")),
+                                literal(1.0),
+                            ),
+                            else_=literal(0.0),
+                        )
+
+                    token_ratio = matched_tokens_score / literal(float(len(tokens)))
+                    token_match_ratio_boost = token_ratio * literal(0.8)
                 branch_similarity = (
                     (similarity_score * literal(0.4))
                     + (token_similarity_sum * literal(0.4))
                     + prefix_boost
                     + parent_code_boost
                     + all_tokens_boost
+                    + token_match_ratio_boost
                 )
             else:
                 branch_similarity = hybrid_score
