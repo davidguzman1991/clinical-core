@@ -68,6 +68,18 @@ STOPWORDS_ES = {
     "se",
     "su",
 }
+ANATOMICAL_TERMS = [
+    "pierna",
+    "pie",
+    "brazo",
+    "mano",
+    "lumbar",
+    "cervical",
+    "toracico",
+    "abdomen",
+    "tobillo",
+    "rodilla",
+]
 
 
 # ---------------------------------------------------------------------------
@@ -184,6 +196,14 @@ class ClinicalSearchEngine:
                 query_for_repo = normalized
                 intent = self._detect_intent(normalized) if self._flags.enable_intent_detection else None
 
+            anatomical_term = None
+            if not is_code_query:
+                normalized_terms = set((query_for_repo or "").split())
+                for term in ANATOMICAL_TERMS:
+                    if term in normalized_terms:
+                        anatomical_term = term
+                        break
+
             use_similarity = (not is_code_query) and len(query_for_repo) >= 3
             logger.warning(
                 "clinical_search_engine.search query_type=%s similarity_used=%s normalized_query=%r raw_stripped=%r",
@@ -215,6 +235,7 @@ class ClinicalSearchEngine:
                     tags_filter=tags_filter,
                     query_is_code=is_code_query,
                     min_hits=attempt_min_hits,
+                    anatomical_term=anatomical_term,
                 )
                 if os.getenv("SEARCH_DEBUG") == "1":
                     logger.warning(

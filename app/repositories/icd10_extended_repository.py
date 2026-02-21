@@ -150,6 +150,7 @@ class ICD10ExtendedRepository:
         query_is_code: bool = False,
         force_no_similarity: bool = False,
         min_hits: Optional[int] = None,
+        anatomical_term: Optional[str] = None,
     ) -> List[ExtendedICD10Candidate]:
         """Search icd10_extended using hybrid trigram similarity + clinical boosts.
 
@@ -206,6 +207,19 @@ class ICD10ExtendedRepository:
                     func.concat(literal(r"\m"), bindparam("query"), literal(r"\M"))
                 ),
                 literal(0.25),
+            ),
+            else_=literal(0.0),
+        )
+        anatomical_term_param = bindparam("anatomical_term")
+        anatomical_boost = case(
+            (
+                and_(
+                    anatomical_term_param.is_not(None),
+                    func.coalesce(t.c.search_text, "").ilike(
+                        func.concat(literal("%"), anatomical_term_param, literal("%"))
+                    ),
+                ),
+                literal(0.7),
             ),
             else_=literal(0.0),
         )
@@ -296,9 +310,10 @@ class ICD10ExtendedRepository:
                     + parent_code_boost
                     + all_tokens_boost
                     + token_match_ratio_boost
+                    + anatomical_boost
                 )
             else:
-                branch_similarity = hybrid_score
+                branch_similarity = hybrid_score + anatomical_boost
 
             # Base query with hybrid scoring
             stmt = (
@@ -332,6 +347,7 @@ class ICD10ExtendedRepository:
         
         params = {
             "query": query,
+            "anatomical_term": anatomical_term,
         }
         
         self._log_stmt_debug(stmt, params)
