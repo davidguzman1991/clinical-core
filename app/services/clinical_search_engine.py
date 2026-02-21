@@ -492,6 +492,12 @@ class ClinicalSearchEngine:
             "infeccion piel": "celulitis",
             "dolor estomago": "dolor abdominal",
             "infeccion vaginal": "vaginitis",
+            "espalda baja": "lumbar lumbalgia lumbago",
+            "dolor espalda baja": "dolor lumbar lumbalgia lumbago",
+            "parte baja de la espalda": "lumbar lumbalgia lumbago",
+            "espalda alta": "dorsal toracica dorsalgia",
+            "dolor espalda alta": "dolor dorsal dorsalgia toracica",
+            "parte alta de la espalda": "dorsal toracica dorsalgia",
         }
 
         normalized = " ".join((query or "").strip().lower().split())
