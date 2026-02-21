@@ -242,6 +242,44 @@ class ClinicalSearchEngine:
             # 3. Rank
             ranked = self._rank(candidates, query_for_repo, intent=intent)
 
+            # 4.012 Parallel deterministic expanded-term retrieval (hybrid-safe)
+            try:
+                original_normalized = (raw_query or "").lower().strip()
+                expanded_normalized = (query or "").lower().strip()
+
+                if expanded_normalized != original_normalized:
+                    original_terms = original_normalized.split()
+                    expanded_terms = expanded_normalized.split()
+
+                    if len(expanded_terms) > len(original_terms):
+                        expanded_token = expanded_terms[-1]
+                    else:
+                        expanded_token = None
+
+                    priority_candidate = None
+
+                    if expanded_token:
+                        try:
+                            direct_match = await repo.search_by_exact_term(
+                                term=expanded_token,
+                                limit=1,
+                            )
+                            if direct_match:
+                                ranked_match = self._rank(direct_match, query_for_repo, intent=intent)
+                                if ranked_match:
+                                    priority_candidate = ranked_match[0]
+                        except Exception:
+                            priority_candidate = None
+
+                    if priority_candidate:
+                        already_present = any(r.code == priority_candidate.code for r in ranked)
+                        if not already_present:
+                            ranked.insert(0, priority_candidate)
+                        else:
+                            ranked = [priority_candidate] + [r for r in ranked if r.code != priority_candidate.code]
+            except Exception:
+                pass
+
             # 4.015 Deterministic clinical override (hybrid layer)
             try:
                 original_normalized = (raw_query or "").lower().strip()

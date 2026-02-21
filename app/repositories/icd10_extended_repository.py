@@ -360,6 +360,50 @@ class ICD10ExtendedRepository:
             for r in rows
         ]
 
+    async def search_by_exact_term(self, term: str, limit: int = 1) -> List[ExtendedICD10Candidate]:
+        if not term:
+            return []
+
+        t = self._table
+        stmt = (
+            select(
+                t.c.code,
+                t.c.description,
+                func.coalesce(t.c.description_normalized, "").label("description_normalized"),
+                literal(0.0).label("similarity"),
+                func.coalesce(t.c.priority_score, literal(0.0)).label("priority_score"),
+                func.coalesce(t.c.tags, "").label("tags"),
+                literal(False).label("exact_code_match"),
+                literal(False).label("prefix_match"),
+                literal(False).label("description_match"),
+            )
+            .where(func.coalesce(t.c.description_normalized, "").ilike(f"%{term}%"))
+            .order_by(func.coalesce(t.c.priority_score, literal(0.0)).desc(), t.c.code.asc())
+            .limit(limit)
+        )
+
+        try:
+            result = await self._db.execute(stmt)
+            rows = result.all()
+        except Exception:
+            logger.exception("icd10_extended.search_by_exact_term failed term=%r", term)
+            return []
+
+        return [
+            ExtendedICD10Candidate(
+                code=r.code,
+                description=r.description,
+                description_normalized=r.description_normalized or "",
+                similarity=float(r.similarity or 0.0),
+                priority=float(r.priority_score or 0.0),
+                tags=r.tags or "",
+                exact_code_match=bool(r.exact_code_match),
+                prefix_match=bool(r.prefix_match),
+                description_match=bool(r.description_match),
+            )
+            for r in rows
+        ]
+
     # ------------------------------------------------------------------
     # lookup_code
     # ------------------------------------------------------------------
