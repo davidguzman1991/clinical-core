@@ -641,6 +641,20 @@ class ClinicalSearchEngine:
         return best_intent if best_hits > 0 else None
 
     @staticmethod
+    def _detect_diabetes_intent(normalized_query: str) -> Optional[str]:
+        q = (normalized_query or "").lower()
+
+        type2_patterns = ["tipo 2", "tipo ii", "dm2", "no insulino", "no insulinodependiente"]
+        type1_patterns = ["tipo 1", "tipo i", "dm1", "insulino dependiente"]
+
+        if any(p in q for p in type2_patterns):
+            return "E11"
+        if any(p in q for p in type1_patterns):
+            return "E10"
+
+        return None
+
+    @staticmethod
     def _is_code_query(value: str) -> bool:
         compact = (value or "").strip().replace(" ", "")
         return bool(ICD_CODE_RE.match(compact)) or bool(re.match(r"^[A-Za-z]\d", compact))
@@ -690,6 +704,7 @@ class ClinicalSearchEngine:
         scored: List[ClinicalSearchResult] = []
 
         is_code_query = bool(ICD_CODE_RE.match(query.replace(" ", "")))
+        intent_prefix = self._detect_diabetes_intent(query) if not is_code_query else None
 
         for c in candidates:
             score = 0.0
@@ -706,8 +721,16 @@ class ClinicalSearchEngine:
             if c.description_match:
                 score += w.description_match
 
+            # Lightweight clinical intent boost for diabetes subtype patterns.
+            # This does NOT override similarity logic.
+            # It only slightly prioritizes subtype-consistent ICD prefixes (E10 / E11).
+            intent_boost = 0.0
+            if intent_prefix is not None and c.code.startswith(intent_prefix):
+                intent_boost = 0.15
+            final_similarity = c.similarity + intent_boost
+
             # Trigram similarity (continuous)
-            score += c.similarity * w.similarity * 100  # normalize to comparable range
+            score += final_similarity * w.similarity * 100  # normalize to comparable range
 
             # Priority boost from icd10_extended
             score += c.priority * w.priority_boost
