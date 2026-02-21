@@ -38,6 +38,7 @@ from app.repositories.icd10_extended_repository import (
     ExtendedICD10Candidate,
     ICD10ExtendedRepository,
 )
+from clinical_phenotype import classify_phenotype
 
 logger = logging.getLogger(__name__)
 
@@ -354,6 +355,41 @@ class ClinicalSearchEngine:
                         for result in results:
                             if hasattr(result, "_micro_boost"):
                                 delattr(result, "_micro_boost")
+            except Exception:
+                pass
+
+            # 4.08 Phenotype-based post-ranking adjustment (safe and reversible)
+            try:
+                phenotype_info = classify_phenotype(raw_query)
+                phenotype = phenotype_info.get("phenotype")
+
+                if phenotype:
+                    for result in results:
+                        adjusted_score = getattr(result, "similarity", getattr(result, "score", 0.0))
+                        code = (result.code or "").upper()
+
+                        if phenotype == "neuropathic":
+                            if code.startswith(("G", "R20")):
+                                adjusted_score *= 1.15
+                            if code.startswith(("S",)):
+                                adjusted_score *= 0.90
+                        elif phenotype == "traumatic":
+                            if code.startswith(("S", "T")):
+                                adjusted_score *= 1.15
+                        elif phenotype == "inflammatory":
+                            if code.startswith(("M",)):
+                                adjusted_score *= 1.10
+
+                        setattr(result, "_phenotype_adjusted_score", adjusted_score)
+
+                    results.sort(
+                        key=lambda r: getattr(r, "_phenotype_adjusted_score", getattr(r, "score", 0.0)),
+                        reverse=True,
+                    )
+
+                    for result in results:
+                        if hasattr(result, "_phenotype_adjusted_score"):
+                            delattr(result, "_phenotype_adjusted_score")
             except Exception:
                 pass
 
