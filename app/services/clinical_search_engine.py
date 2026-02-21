@@ -242,7 +242,7 @@ class ClinicalSearchEngine:
             # 3. Rank
             ranked = self._rank(candidates, query_for_repo, intent=intent)
 
-            # 4.02 Expansion-aware clinical prioritization layer
+            # 4.015 Deterministic clinical override (hybrid layer)
             try:
                 original_normalized = (raw_query or "").lower().strip()
                 expanded_normalized = (query or "").lower().strip()
@@ -250,18 +250,16 @@ class ClinicalSearchEngine:
                 if expanded_normalized != original_normalized:
                     original_terms = original_normalized.split()
                     expanded_terms = expanded_normalized.split()
-                    expanded_token = None
 
                     if len(expanded_terms) > len(original_terms):
                         expanded_token = expanded_terms[-1]
+                    else:
+                        expanded_token = None
 
                     priority_candidate = None
                     if expanded_token:
                         for item in ranked:
-                            description_text = (
-                                (getattr(item, "description_normalized", None) or item.label or "")
-                                .lower()
-                            )
+                            description_text = (getattr(item, "description_normalized", "") or "").lower()
                             if expanded_token in description_text:
                                 priority_candidate = item
                                 break
