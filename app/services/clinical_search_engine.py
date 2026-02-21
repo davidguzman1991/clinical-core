@@ -38,6 +38,7 @@ from app.repositories.icd10_extended_repository import (
     ExtendedICD10Candidate,
     ICD10ExtendedRepository,
 )
+from app.services.ontology_shadow_service import detect_shadow_ontology
 from clinical_phenotype import classify_phenotype
 
 logger = logging.getLogger(__name__)
@@ -245,6 +246,12 @@ class ClinicalSearchEngine:
                 query_for_repo,
                 raw_direct,
             )
+
+            # Passive shadow ontology detection: logs only, no ranking/response impact.
+            try:
+                await self._db.run_sync(lambda sync_db: detect_shadow_ontology(query_for_repo, sync_db))
+            except Exception:
+                pass
 
             # 2. Retrieve candidates from icd10_extended
             repo = ICD10ExtendedRepository(self._db)
