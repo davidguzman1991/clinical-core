@@ -80,6 +80,14 @@ ANATOMICAL_TERMS = [
     "tobillo",
     "rodilla",
 ]
+ANATOMICAL_SYNONYMS = {
+    "digestivo": "gastrointestinal",
+    "digestiva": "gastrointestinal",
+    "gastro": "gastrointestinal",
+    "gastrointestinal": "gastrointestinal",
+    "estomacal": "gastrointestinal",
+    "intestinal": "gastrointestinal",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -199,11 +207,20 @@ class ClinicalSearchEngine:
 
             anatomical_term = None
             if not is_code_query:
-                normalized_terms = set((query_for_repo or "").split())
-                for term in ANATOMICAL_TERMS:
-                    if term in normalized_terms:
-                        anatomical_term = term
+                normalized_tokens = set(_TOKEN_RE.findall(query_for_repo or ""))
+                for token in normalized_tokens:
+                    mapped_term = ANATOMICAL_SYNONYMS.get(token)
+                    if mapped_term:
+                        anatomical_term = mapped_term
                         break
+
+                # Keep legacy anatomical detection behavior for other systems.
+                if anatomical_term is None:
+                    normalized_terms = set((query_for_repo or "").split())
+                    for term in ANATOMICAL_TERMS:
+                        if term in normalized_terms:
+                            anatomical_term = term
+                            break
 
             use_similarity = (not is_code_query) and len(query_for_repo) >= 3
             logger.warning(
@@ -283,6 +300,17 @@ class ClinicalSearchEngine:
                     variant_used = attempt_query
                     retry_plan_triggered = attempt_kind != "base"
                     break
+
+            if search_mode == "hybrid" and anatomical_term is not None:
+                for candidate in candidates:
+                    tags_lower = (candidate.tags or "").lower()
+                    if anatomical_term in tags_lower:
+                        candidate.similarity += 0.12
+                        logger.debug(
+                            "Anatomical boost applied: %s -> %s",
+                            anatomical_term,
+                            candidate.code,
+                        )
 
             logger.warning(
                 "clinical_search_engine.search candidates=%s query=%r query_type=%s retry_plan_triggered=%s variant_used=%r",
