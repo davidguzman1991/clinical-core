@@ -334,7 +334,7 @@ class ClinicalSearchEngine:
                     description_norm = (candidate.description_normalized or candidate.description or "").lower()
                     tags_lower = (candidate.tags or "").lower()
 
-                    if anatomical_term in tags_lower:
+                    if anatomical_term and isinstance(anatomical_term, str) and tags_lower and anatomical_term in tags_lower:
                         candidate.similarity += 0.12
                         logger.debug(
                             "Anatomical boost applied: %s -> %s",
