@@ -259,91 +259,127 @@ class ICD10ExtendedRepository:
                 .limit(limit)
             )
         else:
+            if force_no_similarity:
+                search_text_col = func.coalesce(t.c.search_text, "")
+                desc_norm_col = func.coalesce(t.c.description_normalized, "")
+                desc_match = or_(
+                    search_text_col.ilike(bindparam("desc_query")),
+                    desc_norm_col.ilike(bindparam("desc_query")),
+                )
+                basic_similarity = func.greatest(
+                    func.similarity(search_text_col, bindparam("query")),
+                    func.similarity(desc_norm_col, bindparam("query")),
+                ).label("similarity")
+                literal_match_rank = case((desc_match, literal(1)), else_=literal(0))
+
+                stmt = (
+                    select(
+                        t.c.code,
+                        t.c.description,
+                        desc_norm_col.label("description_normalized"),
+                        basic_similarity,
+                        func.coalesce(t.c.priority_score, literal(0.0)).label("priority_score"),
+                        func.coalesce(t.c.priority, "").label("priority_label"),
+                        func.coalesce(t.c.tags, "").label("tags"),
+                        literal(False).label("exact_code_match"),
+                        literal(False).label("prefix_match"),
+                        desc_match.label("description_match"),
+                    )
+                    .where(or_(desc_match, basic_similarity > literal(0.0)))
+                    .order_by(
+                        literal_match_rank.desc(),
+                        basic_similarity.desc(),
+                        func.coalesce(t.c.priority_score, literal(0.0)).desc(),
+                        t.c.code.asc(),
+                    )
+                    .limit(limit)
+                )
+            else:
             # Hybrid clinical ranking engine v2.3 – multi-token clinical intent scoring
-            normalized_query = (query or "").strip()
-            tokens = [tok for tok in normalized_query.split() if tok]
-            # Always use hybrid ranking for natural language queries
-            # Single-token queries were previously degraded by simple branch
-            token_similarity_sum = sum(
-                (
-                    func.similarity(func.coalesce(t.c.search_text, ""), literal(tok))
-                    for tok in tokens
-                ),
-                literal(0.0),
-            )
-
-            prefix_boost = literal(0.0)
-            all_tokens_boost = literal(0.0)
-            token_match_ratio_boost = literal(0.0)
-
-            if tokens:
-                primary_token = tokens[0]
-                prefix_boost = case(
-                    (t.c.description.ilike(literal(primary_token) + "%"), literal(0.5)),
-                    (t.c.description.ilike("%" + literal(primary_token) + "%"), literal(0.3)),
-                    else_=literal(0.0),
-                )
-                all_tokens_boost = case(
+                normalized_query = (query or "").strip()
+                tokens = [tok for tok in normalized_query.split() if tok]
+                # Always use hybrid ranking for natural language queries
+                # Single-token queries were previously degraded by simple branch
+                token_similarity_sum = sum(
                     (
-                        and_(
-                            *[
-                                func.coalesce(t.c.search_text, "").ilike(f"%{tok}%")
-                                for tok in tokens
-                            ]
-                        ),
-                        literal(0.4),
+                        func.similarity(func.coalesce(t.c.search_text, ""), literal(tok))
+                        for tok in tokens
                     ),
-                    else_=literal(0.0),
+                    literal(0.0),
                 )
-                # Refinement clínico: boost proporcional por cobertura de tokens en search_text.
-                matched_tokens_score = literal(0.0)
 
-                for tok in tokens:
-                    matched_tokens_score = matched_tokens_score + case(
+                prefix_boost = literal(0.0)
+                all_tokens_boost = literal(0.0)
+                token_match_ratio_boost = literal(0.0)
+
+                if tokens:
+                    primary_token = tokens[0]
+                    prefix_boost = case(
+                        (t.c.description.ilike(literal(primary_token) + "%"), literal(0.5)),
+                        (t.c.description.ilike("%" + literal(primary_token) + "%"), literal(0.3)),
+                        else_=literal(0.0),
+                    )
+                    all_tokens_boost = case(
                         (
-                            func.coalesce(t.c.search_text, "").ilike(literal(f"%{tok}%")),
-                            literal(1.0),
+                            and_(
+                                *[
+                                    func.coalesce(t.c.search_text, "").ilike(f"%{tok}%")
+                                    for tok in tokens
+                                ]
+                            ),
+                            literal(0.4),
                         ),
                         else_=literal(0.0),
                     )
+                    # Refinement clínico: boost proporcional por cobertura de tokens en search_text.
+                    matched_tokens_score = literal(0.0)
 
-                token_ratio = matched_tokens_score / literal(float(len(tokens)))
-                token_match_ratio_boost = token_ratio * literal(1.0)
+                    for tok in tokens:
+                        matched_tokens_score = matched_tokens_score + case(
+                            (
+                                func.coalesce(t.c.search_text, "").ilike(literal(f"%{tok}%")),
+                                literal(1.0),
+                            ),
+                            else_=literal(0.0),
+                        )
 
-            branch_similarity = (
-                (similarity_score * literal(0.30))
-                + (token_similarity_sum * literal(0.45))
-                + prefix_boost
-                + parent_code_boost
-                + all_tokens_boost
-                + token_match_ratio_boost
-                + anatomical_boost
-            )
+                    token_ratio = matched_tokens_score / literal(float(len(tokens)))
+                    token_match_ratio_boost = token_ratio * literal(1.0)
 
-            # Base query with hybrid scoring
-            stmt = (
-                select(
-                    t.c.code,
-                    t.c.description,
-                    func.coalesce(t.c.description_normalized, "").label("description_normalized"),
-                    branch_similarity.label("similarity"),  # Keep as similarity for response compatibility
-                    func.coalesce(t.c.priority_score, literal(0.0)).label("priority_score"),
-                    func.coalesce(t.c.priority, "").label("priority_label"),
-                    func.coalesce(t.c.tags, "").label("tags"),
-                    literal(False).label("exact_code_match"),
-                    literal(False).label("prefix_match"),
-                    literal(False).label("description_match"),
+                branch_similarity = (
+                    (similarity_score * literal(0.30))
+                    + (token_similarity_sum * literal(0.45))
+                    + prefix_boost
+                    + parent_code_boost
+                    + all_tokens_boost
+                    + token_match_ratio_boost
+                    + anatomical_boost
                 )
-                .where(
-                    func.similarity(
-                        func.coalesce(t.c.search_text, ""),
-                        bindparam("query"),
+
+                # Base query with hybrid scoring
+                stmt = (
+                    select(
+                        t.c.code,
+                        t.c.description,
+                        func.coalesce(t.c.description_normalized, "").label("description_normalized"),
+                        branch_similarity.label("similarity"),  # Keep as similarity for response compatibility
+                        func.coalesce(t.c.priority_score, literal(0.0)).label("priority_score"),
+                        func.coalesce(t.c.priority, "").label("priority_label"),
+                        func.coalesce(t.c.tags, "").label("tags"),
+                        literal(False).label("exact_code_match"),
+                        literal(False).label("prefix_match"),
+                        literal(False).label("description_match"),
                     )
-                    > literal(0.08)
+                    .where(
+                        func.similarity(
+                            func.coalesce(t.c.search_text, ""),
+                            bindparam("query"),
+                        )
+                        > literal(0.08)
+                    )
+                    .order_by(text("similarity DESC"))
+                    .limit(limit)
                 )
-                .order_by(text("similarity DESC"))
-                .limit(limit)
-            )
         
         # Optional tag filter (CURRENT behavior: exclusion)
         if tags_filter:
@@ -353,6 +389,7 @@ class ICD10ExtendedRepository:
         params = {
             "query": query,
             "anatomical_term": anatomical_term,
+            "desc_query": f"%{query}%",
         }
         
         self._log_stmt_debug(stmt, params)

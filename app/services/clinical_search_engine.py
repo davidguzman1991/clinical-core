@@ -162,6 +162,7 @@ class ClinicalSearchEngine:
         *,
         limit: int | None = None,
         tags_filter: Optional[Sequence[str]] = None,
+        search_mode: str = "hybrid",
     ) -> List[ClinicalSearchResult]:
         """Execute the full search pipeline and return ranked results."""
         query = self._expand_common_clinical_phrases(raw_query)
@@ -218,6 +219,39 @@ class ClinicalSearchEngine:
             candidates: list[ExtendedICD10Candidate] = []
             variant_used = query_for_repo
             retry_plan_triggered = False
+
+            # Literal mode: simple expanded term matching without hybrid ranking.
+            # Does not modify or interfere with hybrid mode.
+            if search_mode == "literal" and not is_code_query:
+                candidates = await repo.search_candidates(
+                    query_for_repo,
+                    limit=candidate_limit,
+                    tags_filter=tags_filter,
+                    query_is_code=False,
+                    force_no_similarity=True,
+                    min_hits=None,
+                    anatomical_term=None,
+                )
+                results = [
+                    ClinicalSearchResult(
+                        code=c.code,
+                        label=c.description,
+                        score=round(float(c.similarity or 0.0), 4),
+                        source="icd10_extended",
+                        match_features=MatchFeatures(
+                            exact_code=c.exact_code_match,
+                            prefix_code=c.prefix_match,
+                            description_match=c.description_match,
+                            trigram_similarity=round(c.similarity, 4),
+                            priority=c.priority,
+                            intent_aligned=False,
+                            tag_matched=bool(c.tags),
+                        ),
+                        explanation="literal",
+                    )
+                    for c in candidates[:effective_limit]
+                ]
+                return results
 
             search_attempts: list[tuple[str, Optional[int], str]] = [(query_for_repo, None, "base")]
             if not is_code_query:

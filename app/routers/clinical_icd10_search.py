@@ -143,6 +143,7 @@ async def _run_icd10_search(
 async def search_icd10(
     q: str = Query(..., min_length=1, description="Clinical query (code or terms)"),
     limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
+    mode: Optional[str] = Query("hybrid"),
     db: AsyncSession = Depends(get_async_db),
 ) -> list:
     raw_q = q
@@ -166,12 +167,21 @@ async def search_icd10(
     )
 
     use_extended = bool(search_feature_flags.use_extended_icd10)
+    effective_mode = (mode or "hybrid").strip().lower()
+    if effective_mode not in {"hybrid", "literal"}:
+        effective_mode = "hybrid"
     fallback_to_legacy = False
     extended_results_count = 0
     legacy_results_count = 0
     if use_extended:
         try:
-            extended_results = await _run_extended_search(q=normalized_q, limit=limit, db=db)
+            # Ensure extended search executes regardless of mode validation
+            extended_results = await _run_extended_search(
+                q=normalized_q,
+                limit=limit,
+                db=db,
+                mode=effective_mode,
+            )
             extended_results_count = len(extended_results)
             logger.warning(
                 "/clinical/icd10/search use_extended=%s extended_results=%s fallback_to_legacy=%s legacy_results=%s normalized_q=%r",
@@ -224,10 +234,11 @@ async def _run_extended_search(
     q: str,
     limit: int,
     db: AsyncSession,
+    mode: str = "hybrid",
 ) -> List[dict]:
     """Delegate to the unified ClinicalSearchEngine (icd10_extended)."""
     engine = ClinicalSearchEngine(db)
-    results = await engine.search(q, limit=limit)
+    results = await engine.search(q, limit=limit, search_mode=mode)
     return [
         {
             "code": r.code,
