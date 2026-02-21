@@ -151,6 +151,7 @@ class ClinicalSearchEngine:
         tags_filter: Optional[Sequence[str]] = None,
     ) -> List[ClinicalSearchResult]:
         """Execute the full search pipeline and return ranked results."""
+        query = self._expand_common_clinical_phrases(raw_query)
         t0 = time.perf_counter()
         effective_limit = min(limit or self._tuning.default_limit, self._tuning.max_limit)
         candidate_limit = effective_limit * self._tuning.candidate_multiplier
@@ -166,7 +167,7 @@ class ClinicalSearchEngine:
                 self._tuning.default_limit,
             )
 
-            raw_direct = (raw_query or "").strip()
+            raw_direct = (query or "").strip()
             is_code_query = self._is_code_query(raw_direct)
 
             # 1. Normalize only for natural language queries
@@ -175,7 +176,7 @@ class ClinicalSearchEngine:
                 normalized = query_for_repo
                 intent = None
             else:
-                normalized = self._normalize_query(raw_query)
+                normalized = self._normalize_query(query)
                 if not normalized:
                     logger.warning("clinical_search_engine.search normalized query is empty; returning []")
                     return []
@@ -328,6 +329,64 @@ class ClinicalSearchEngine:
     # ------------------------------------------------------------------
     # Pipeline stages
     # ------------------------------------------------------------------
+
+    def _expand_common_clinical_phrases(self, query: str) -> str:
+        COMMON_PHRASE_MAP = {
+            "colesterol alto": "hipercolesterolemia",
+            "trigliceridos altos": "hipertrigliceridemia",
+            "azucar alta": "hiperglucemia",
+            "azucar baja": "hipoglucemia",
+            "presion alta": "hipertension arterial",
+            "presion baja": "hipotension",
+            "prediabetes": "glucosa alterada en ayunas",
+            "tiroides alta": "hipertiroidismo",
+            "tiroides baja": "hipotiroidismo",
+            "alza termica": "fiebre",
+            "gases": "flatulencia",
+            "acidez": "pirosis",
+            "vision doble": "diplopia",
+            "hongo unas": "onicomicosis",
+            "hongos en unas": "onicomicosis",
+            "piel seca": "xerosis",
+            "dolor de espalda": "dorsalgia",
+            "temblor": "temblor esencial",
+            "perdida de olfato": "anosmia",
+            "infeccion urinaria": "infeccion de vias urinarias",
+            "dolor de cabeza": "cefalea",
+            "dolor en el pecho": "dolor toracico",
+            "dolor al orinar": "disuria",
+            "falta de aire": "disnea",
+            "desmayo": "sincope",
+            "mareo fuerte": "vertigo",
+            "golpe en la cabeza": "traumatismo craneoencefalico",
+            "infeccion garganta": "faringitis",
+            "infeccion pulmonar": "neumonia",
+            "gripe fuerte": "infeccion respiratoria aguda",
+            "dolor lumbar": "lumbalgia",
+            "dolor de rodilla": "gonalgia",
+            "sangrado anormal": "metrorragia",
+            "retraso menstrual": "amenorrea",
+            "dolor menstrual": "dismenorrea",
+            "higado graso": "esteatosis hepatica",
+            "acido urico alto": "hiperuricemia",
+            "corazon grande": "cardiomegalia",
+            "derrames cerebral": "accidente cerebrovascular",
+            "infarto": "infarto agudo de miocardio",
+            "arritmia": "trastorno del ritmo",
+            "obesidad morbida": "obesidad grado iii",
+            "torcedura": "esguince",
+            "golpe fuerte": "contusion",
+            "infeccion oido": "otitis",
+            "infeccion piel": "celulitis",
+            "dolor estomago": "dolor abdominal",
+            "infeccion vaginal": "vaginitis",
+        }
+
+        normalized = " ".join((query or "").strip().lower().split())
+        mapped_term = COMMON_PHRASE_MAP.get(normalized)
+        if mapped_term:
+            return f"{normalized} {mapped_term}"
+        return query
 
     @staticmethod
     def _normalize_query(value: str) -> str:
