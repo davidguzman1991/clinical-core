@@ -288,10 +288,10 @@ class ICD10ExtendedRepository:
                         )
 
                     token_ratio = matched_tokens_score / literal(float(len(tokens)))
-                    token_match_ratio_boost = token_ratio * literal(0.8)
+                    token_match_ratio_boost = token_ratio * literal(1.0)
                 branch_similarity = (
-                    (similarity_score * literal(0.4))
-                    + (token_similarity_sum * literal(0.4))
+                    (similarity_score * literal(0.30))
+                    + (token_similarity_sum * literal(0.45))
                     + prefix_boost
                     + parent_code_boost
                     + all_tokens_boost
