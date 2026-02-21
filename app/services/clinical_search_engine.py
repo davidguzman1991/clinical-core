@@ -38,6 +38,7 @@ from app.repositories.icd10_extended_repository import (
     ExtendedICD10Candidate,
     ICD10ExtendedRepository,
 )
+from app.services.anatomical_boost_service import apply_anatomical_boost
 from app.services.ontology_shadow_service import detect_shadow_ontology
 from clinical_phenotype import classify_phenotype
 
@@ -562,6 +563,35 @@ class ClinicalSearchEngine:
 
                     if len(grouped_results) == len(extended_results):
                         results = grouped_results
+            except Exception:
+                pass
+
+            try:
+                tags_by_code = {c.code: (c.tags or "") for c in candidates}
+                payload = [
+                    {
+                        "code": r.code,
+                        "similarity": float(getattr(r, "score", 0.0) or 0.0),
+                        "tags": tags_by_code.get(r.code, ""),
+                    }
+                    for r in results
+                ]
+                boosted_payload = await self._db.run_sync(
+                    lambda sync_db: apply_anatomical_boost(payload, query_for_repo, sync_db)
+                )
+                if boosted_payload:
+                    score_by_code = {
+                        str(item.get("code", "")): float(item.get("similarity", 0.0) or 0.0)
+                        for item in boosted_payload
+                    }
+                    order_index = {
+                        str(item.get("code", "")): idx
+                        for idx, item in enumerate(boosted_payload)
+                    }
+                    for r in results:
+                        if r.code in score_by_code:
+                            r.score = round(score_by_code[r.code], 4)
+                    results.sort(key=lambda r: (order_index.get(r.code, 10**9), -r.score))
             except Exception:
                 pass
 
