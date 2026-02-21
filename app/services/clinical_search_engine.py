@@ -245,6 +245,42 @@ class ClinicalSearchEngine:
             # 4. Trim
             results = ranked[:effective_limit]
 
+            # 4.05 Clinical semantic micro-boost (safe post-ranking adjustment)
+            try:
+                normalized_query = " ".join((query or "").lower().strip().split())
+                original_query = " ".join((raw_query or "").lower().strip().split())
+                if normalized_query != original_query:
+                    expanded_terms = normalized_query.split()
+                    original_terms = original_query.split()
+                    expanded_token = None
+
+                    if len(expanded_terms) > len(original_terms):
+                        expanded_token = expanded_terms[-1]
+
+                    if expanded_token:
+                        for result in results:
+                            description_text = (
+                                (getattr(result, "description_normalized", None) or result.label or "")
+                                .strip()
+                                .lower()
+                            )
+                            if expanded_token in description_text:
+                                setattr(result, "_micro_boost", 0.12)
+
+                        results.sort(
+                            key=lambda r: (
+                                getattr(r, "similarity_score", getattr(r, "score", 0.0))
+                                + getattr(r, "_micro_boost", 0.0)
+                            ),
+                            reverse=True,
+                        )
+
+                        for result in results:
+                            if hasattr(result, "_micro_boost"):
+                                delattr(result, "_micro_boost")
+            except Exception:
+                pass
+
             # 4.1 Post-ranking visual grouping: parent ICD (3-char) followed by children (XXX.*)
             try:
                 extended_results = results
