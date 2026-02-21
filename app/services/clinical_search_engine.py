@@ -88,6 +88,21 @@ ANATOMICAL_SYNONYMS = {
     "estomacal": "gastrointestinal",
     "intestinal": "gastrointestinal",
 }
+PHENOMENON_KEYWORDS = [
+    "hemorragia",
+    "infarto",
+    "insuficiencia",
+    "fractura",
+    "infeccion",
+    "neoplasia",
+]
+AGE_TERMS = [
+    "neonatal",
+    "neonato",
+    "recien nacido",
+    "perinatal",
+    "lactante",
+]
 
 
 # ---------------------------------------------------------------------------
@@ -301,9 +316,17 @@ class ClinicalSearchEngine:
                     retry_plan_triggered = attempt_kind != "base"
                     break
 
-            if search_mode == "hybrid" and anatomical_term is not None:
+            if search_mode == "hybrid":
+                phenomenon_detected = next(
+                    (kw for kw in PHENOMENON_KEYWORDS if kw in (query_for_repo or "").lower()),
+                    None,
+                )
+                query_mentions_age = any(term in (query_for_repo or "").lower() for term in AGE_TERMS)
+
                 for candidate in candidates:
+                    description_norm = (candidate.description_normalized or candidate.description or "").lower()
                     tags_lower = (candidate.tags or "").lower()
+
                     if anatomical_term in tags_lower:
                         candidate.similarity += 0.12
                         logger.debug(
@@ -311,6 +334,26 @@ class ClinicalSearchEngine:
                             anatomical_term,
                             candidate.code,
                         )
+
+                    if (
+                        anatomical_term is not None
+                        and phenomenon_detected is not None
+                        and anatomical_term in tags_lower
+                        and phenomenon_detected in description_norm
+                    ):
+                        candidate.similarity += 0.05
+                        logger.debug("Phenomenon boost applied to %s", candidate.code)
+
+                    if (
+                        not query_mentions_age
+                        and (
+                            "neonatal" in tags_lower
+                            or "perinatal" in tags_lower
+                            or "recien nacido" in description_norm
+                        )
+                    ):
+                        candidate.similarity = max(0.0, candidate.similarity - 0.05)
+                        logger.debug("Neonatal penalty applied to %s", candidate.code)
 
             logger.warning(
                 "clinical_search_engine.search candidates=%s query=%r query_type=%s retry_plan_triggered=%s variant_used=%r",
