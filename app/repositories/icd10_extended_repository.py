@@ -260,11 +260,24 @@ class ICD10ExtendedRepository:
                     (t.c.description.ilike("%" + literal(primary_token) + "%"), literal(0.3)),
                     else_=literal(0.0),
                 )
+                all_tokens_boost = case(
+                    (
+                        and_(
+                            *[
+                                func.coalesce(t.c.search_text, "").ilike(f"%{tok}%")
+                                for tok in tokens
+                            ]
+                        ),
+                        literal(0.4),
+                    ),
+                    else_=literal(0.0),
+                )
                 branch_similarity = (
                     (similarity_score * literal(0.4))
                     + (token_similarity_sum * literal(0.4))
                     + prefix_boost
                     + parent_code_boost
+                    + all_tokens_boost
                 )
             else:
                 branch_similarity = hybrid_score
