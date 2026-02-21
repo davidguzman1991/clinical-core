@@ -242,10 +242,11 @@ class ClinicalSearchEngine:
             # 3. Rank
             ranked = self._rank(candidates, query_for_repo, intent=intent)
 
-            # 4.012 Parallel deterministic expanded-term retrieval (hybrid-safe)
+            # 4.012 Parallel deterministic expanded-term retrieval (type-safe)
             try:
                 original_normalized = (raw_query or "").lower().strip()
                 expanded_normalized = (query or "").lower().strip()
+                expanded_token = None
 
                 if expanded_normalized != original_normalized:
                     original_terms = original_normalized.split()
@@ -253,30 +254,40 @@ class ClinicalSearchEngine:
 
                     if len(expanded_terms) > len(original_terms):
                         expanded_token = expanded_terms[-1]
+
+                priority_model = None
+
+                if expanded_token:
+                    try:
+                        models = await repo.search_by_exact_term(
+                            term=expanded_token,
+                            limit=1,
+                        )
+                        if models:
+                            priority_model = models[0]
+                    except Exception:
+                        priority_model = None
+
+                priority_result = None
+
+                if priority_model:
+                    try:
+                        priority_ranked = self._rank([priority_model], query_for_repo, intent=intent)
+                        if priority_ranked:
+                            priority_result = priority_ranked[0]
+                    except Exception:
+                        priority_result = None
+
+                if priority_result:
+                    existing_index = next(
+                        (i for i, r in enumerate(ranked) if r.code == priority_result.code),
+                        None,
+                    )
+
+                    if existing_index is None:
+                        ranked.insert(0, priority_result)
                     else:
-                        expanded_token = None
-
-                    priority_candidate = None
-
-                    if expanded_token:
-                        try:
-                            direct_match = await repo.search_by_exact_term(
-                                term=expanded_token,
-                                limit=1,
-                            )
-                            if direct_match:
-                                ranked_match = self._rank(direct_match, query_for_repo, intent=intent)
-                                if ranked_match:
-                                    priority_candidate = ranked_match[0]
-                        except Exception:
-                            priority_candidate = None
-
-                    if priority_candidate:
-                        already_present = any(r.code == priority_candidate.code for r in ranked)
-                        if not already_present:
-                            ranked.insert(0, priority_candidate)
-                        else:
-                            ranked = [priority_candidate] + [r for r in ranked if r.code != priority_candidate.code]
+                        ranked.insert(0, ranked.pop(existing_index))
             except Exception:
                 pass
 
