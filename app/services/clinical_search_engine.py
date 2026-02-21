@@ -244,6 +244,45 @@ class ClinicalSearchEngine:
             # 4. Trim
             results = ranked[:effective_limit]
 
+            # 4.1 Post-ranking visual grouping: parent ICD (3-char) followed by children (XXX.*)
+            try:
+                extended_results = results
+                grouped_results: list[ClinicalSearchResult] = []
+                parent_map: dict[str, list[ClinicalSearchResult]] = {}
+                parent_detected = False
+
+                for result in extended_results:
+                    code = (result.code or "").strip().upper()
+                    if len(code) == 3:
+                        parent_detected = True
+                    if len(code) > 4 and code.startswith(code[:3] + "."):
+                        parent_map.setdefault(code[:3], []).append(result)
+
+                if parent_detected:
+                    added_ids: set[int] = set()
+                    for result in extended_results:
+                        rid = id(result)
+                        code = (result.code or "").strip().upper()
+
+                        if len(code) == 3:
+                            if rid not in added_ids:
+                                grouped_results.append(result)
+                                added_ids.add(rid)
+                            for child in parent_map.get(code, []):
+                                child_id = id(child)
+                                if child_id not in added_ids:
+                                    grouped_results.append(child)
+                                    added_ids.add(child_id)
+                        else:
+                            if rid not in added_ids:
+                                grouped_results.append(result)
+                                added_ids.add(rid)
+
+                    if len(grouped_results) == len(extended_results):
+                        results = grouped_results
+            except Exception:
+                pass
+
             # 5. Structured logging (fire-and-forget style, never raises)
             duration_ms = (time.perf_counter() - t0) * 1000
             self._emit_search_event(
